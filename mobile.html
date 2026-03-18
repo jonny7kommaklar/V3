@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>PragMap Mobile</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+<style>
+:root{--panel:rgba(255,255,255,.20);--line:rgba(15,23,42,.10);--blue:#2563eb}*{box-sizing:border-box}html,body{height:100%;margin:0;font-family:Inter,Arial,sans-serif;overflow:hidden}#map{position:fixed;inset:0}.glass{backdrop-filter:blur(14px);background:var(--panel);border:1px solid var(--line);box-shadow:0 6px 28px rgba(2,6,23,.08)}.topbar{position:fixed;left:10px;right:10px;top:10px;z-index:20;display:flex;justify-content:center}.switcher{display:flex;gap:6px;padding:5px;border-radius:999px}.switcher button{border:0;background:transparent;padding:10px 16px;border-radius:999px;font-weight:800}.switcher button.active{background:var(--blue);color:#fff}.fab{position:fixed;right:12px;bottom:110px;z-index:20;border-radius:999px;border:0;background:linear-gradient(90deg,#0f766e,#2563eb);color:#fff;width:54px;height:54px;font-size:28px}.sheet{position:fixed;left:10px;right:10px;bottom:10px;z-index:20;border-radius:12px;padding:10px;max-height:52vh;overflow:auto}.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}input,select,textarea{width:100%;border:1px solid var(--line);background:rgba(255,255,255,.28);border-radius:12px;padding:10px;font-size:14px}label{display:block;font-size:12px;color:#334155;margin-top:8px}.result-card{display:grid;grid-template-columns:60px 1fr;gap:8px;padding:6px 0}.result-thumb{width:60px;height:48px;border-radius:10px;overflow:hidden;background:#e2e8f0}.result-thumb img,.db-thumb,.modal-photo img,.near-thumb img{width:100%;height:100%;object-fit:cover}.result-name{font-size:13px;font-weight:700}.dbwrap{position:fixed;inset:74px 10px 10px 10px;z-index:18;border-radius:10px;padding:10px;overflow:auto;display:none}.db-table{width:100%;border-collapse:separate;border-spacing:0 8px}.db-table td,.db-table th{padding:8px;font-size:12px;background:rgba(255,255,255,.22)}.db-thumb{width:72px;height:48px;border-radius:8px}body[data-view="db"] .sheet,body[data-view="db"] .fab{display:none}body[data-view="db"] .dbwrap{display:block}.leaflet-top.leaflet-left{top:66px;left:8px}.spot-icon-host{background:transparent;border:0}.spot-wrap{display:flex;flex-direction:column;align-items:center;transform:translateY(-8px)}.spot-dot{border:1.5px solid;border-radius:999px}.spot-label{background:rgba(255,255,255,.28);padding:1px 4px;border-radius:8px;line-height:1.2;white-space:nowrap;margin-bottom:2px}#modal{position:fixed;inset:0;background:rgba(2,6,23,.28);display:none;align-items:flex-end;z-index:40}#modal.open{display:flex}.modal-card{width:100%;border-radius:24px 24px 0 0;padding:12px;max-height:88vh;overflow:auto}.modal-head{display:flex;justify-content:space-between;align-items:center}.modal-photo{height:220px;border-radius:8px;overflow:hidden;background:#e2e8f0}.coord-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.near-card{display:grid;grid-template-columns:66px 1fr;gap:8px;padding:6px 0}.near-thumb{width:66px;height:48px;border-radius:8px;overflow:hidden;background:#e2e8f0}.tiny-btn,.btn{border:1px solid var(--line);background:rgba(255,255,255,.28);border-radius:10px;padding:8px 10px}.btn.primary{background:linear-gradient(90deg,#0f766e,#2563eb);color:#fff}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}.small-note{font-size:12px;color:#475569}.authline{font-size:12px;margin-bottom:8px;display:grid;gap:6px}.toolbar-mini{display:flex;gap:6px;flex-wrap:wrap}
+</style>
+</head>
+<body data-view="map">
+<div id="map"></div>
+<div class="topbar"><div class="glass switcher"><button data-switch="map" class="active">Karte</button><button data-switch="db">Datenbank</button></div></div>
+<button class="fab" data-action="add-pin">＋</button>
+
+<div class="glass sheet">
+  <div class="authline">
+    <strong data-role="auth-state">Lädt …</strong>
+    <div data-role="status">Startet …</div>
+    <div class="small-note" data-role="auth-hint">Auth wird geprüft …</div>
+    <div class="toolbar-mini">
+      <div data-role="auth-fields" class="stack" style="display:none;width:100%">
+        <input type="email" data-role="login-email" placeholder="E-Mail">
+        <input type="password" data-role="login-password" placeholder="Passwort">
+      </div>
+      <button class="btn" data-role="login-btn-password" data-action="login-password">Login</button>
+      <button class="btn" data-role="login-btn-magic" data-action="login-magic" style="display:none">Magic Link</button>
+      <button class="btn" data-role="logout-btn" data-action="logout" style="display:none">Logout</button>
+      <button class="btn" data-role="seed-btn" data-action="seed-import" style="display:none">Seed</button>
+    </div>
+  </div>
+  <input data-role="search" placeholder="Suche">
+  <div class="row2" style="margin-top:8px">
+    <select data-role="layer-filter"></select>
+    <select data-role="day-filter"></select>
+  </div>
+  <label><input type="checkbox" data-role="has-image"> nur mit Bild</label>
+  <div style="font-size:12px;margin-top:10px"><b data-stat="spots">0</b> Treffer · <b data-stat="areas">0</b> Bereichsfilter</div>
+  <div id="resultsList"></div>
+</div>
+
+<section class="glass dbwrap" id="dbWrap">
+  <table class="db-table">
+    <thead><tr><th>ID</th><th>Name</th><th>Tag</th><th>Layer</th><th>Bild</th></tr></thead>
+    <tbody id="dbBody"></tbody>
+  </table>
+</section>
+
+<div id="modal"><div class="glass modal-card" id="modalInner"></div></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./config.js"></script>
+<script src="./app.js"></script>
+<script>initApp({mobile:true});</script>
+</body>
+</html>

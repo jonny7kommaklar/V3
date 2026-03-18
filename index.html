@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PragMap</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+<style>
+:root{--panel:rgba(255,255,255,.20);--panel-2:rgba(255,255,255,.14);--line:rgba(15,23,42,.12);--text:#0f172a;--muted:#475569;--blue:#2563eb}
+*{box-sizing:border-box}html,body{height:100%;margin:0;font-family:Inter,Arial,sans-serif;color:var(--text);overflow:hidden}body{background:#dbeafe}#map{position:fixed;inset:0;z-index:1}
+.glass{backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);background:var(--panel);border:1px solid var(--line);box-shadow:0 8px 30px rgba(2,6,23,.08)}
+.sidebar{position:fixed;left:16px;top:16px;bottom:16px;width:320px;border-radius:12px;z-index:20;padding:12px 12px 14px;display:flex;flex-direction:column}.brand{padding:6px 4px 10px}.brand h1{margin:0;font-size:28px}
+.toolbar{display:flex;justify-content:center;position:fixed;left:50%;transform:translateX(-50%);top:16px;z-index:21}.switcher{display:flex;gap:6px;padding:6px;border-radius:999px}.switcher button{border:0;background:transparent;padding:12px 22px;border-radius:999px;font-weight:700;font-size:18px;color:#334155;cursor:pointer}.switcher button.active{background:var(--blue);color:#fff}
+.panel-section{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel-2);margin-bottom:8px}.panel-title{display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:800;margin:0 0 8px}
+.search-row input,.compact-select,.small-input,textarea,select,input[type="file"]{width:100%;border:1px solid rgba(15,23,42,.12);background:rgba(255,255,255,.65);border-radius:10px;padding:8px 10px;font-size:13px;outline:none}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}label{display:block;font-size:12px;color:#334155;margin:0 0 8px}input[type="checkbox"]{transform:translateY(1px)}
+.btn{border:1px solid var(--line);background:rgba(255,255,255,.28);padding:8px 10px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:700}.btn.primary{background:linear-gradient(90deg,#0f766e,#2563eb);color:#fff;border-color:transparent}.tiny-btn{border:1px solid var(--line);background:rgba(255,255,255,.28);border-radius:8px;padding:4px 8px;cursor:pointer}.tiny-btn.danger{color:#b91c1c}
+.results-drawer,.layers-drawer{position:fixed;top:110px;z-index:20;border-radius:10px;overflow:hidden}.results-drawer{left:332px;width:280px;max-height:calc(100vh - 140px)}.layers-drawer{right:16px;width:300px;max-height:calc(100vh - 140px)}
+.drawer-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;font-weight:800}.drawer-body{padding:8px 10px 10px;overflow:auto;max-height:calc(100vh - 200px)}.results-drawer.collapsed .drawer-body,.layers-drawer.collapsed .drawer-body{display:none}
+.result-card{display:grid;grid-template-columns:58px 1fr;gap:8px;padding:6px;border-radius:10px;cursor:pointer}.result-card:hover{background:rgba(255,255,255,.18)}.result-thumb{width:58px;height:46px;background:rgba(15,23,42,.06);border-radius:8px;overflow:hidden}.result-thumb img,.db-thumb,.modal-photo img,.near-thumb img{width:100%;height:100%;object-fit:cover}.result-name{font-size:12px;font-weight:700}.result-meta{font-size:11px;color:#475569}
+.stats{margin-top:auto;display:grid;grid-template-columns:1fr 1fr;gap:8px}.stat{padding:14px;border-radius:8px;background:rgba(15,23,42,.82);color:#fff}.stat b{display:block;font-size:24px}.leaflet-top.leaflet-left{top:14px;left:330px}.spot-icon-host{background:transparent;border:0}.spot-wrap{display:flex;flex-direction:column;align-items:center;transform:translateY(-10px)}.spot-dot{border:1.5px solid;border-radius:999px}.spot-label{background:rgba(255,255,255,.28);padding:1px 5px;border-radius:8px;line-height:1.2;white-space:nowrap;margin-bottom:2px}
+[data-view="db"] .sidebar,[data-view="db"] .results-drawer,[data-view="db"] .layers-drawer,#dbWrap{display:none}#dbWrap{display:none;position:fixed;inset:84px 16px 16px 16px;z-index:18;border-radius:12px;overflow:auto;padding:14px}[data-view="db"] #dbWrap{display:block}
+.db-table{width:100%;border-collapse:separate;border-spacing:0 8px}.db-table th{font-size:12px;text-align:left;color:#334155;padding:0 8px}.db-table td{background:rgba(255,255,255,.22);padding:8px;font-size:13px}.db-table tr{cursor:pointer}.db-thumb{width:92px;height:58px;border-radius:8px;background:#e2e8f0}
+details{border-top:1px solid var(--line);padding-top:6px;margin-top:6px}details:first-of-type{border-top:0;padding-top:0;margin-top:0}summary{list-style:none;cursor:pointer;font-weight:700;font-size:13px;margin-bottom:6px}summary::-webkit-details-marker{display:none}
+.layer-row,.area-row{padding:6px 0;border-top:1px solid rgba(15,23,42,.08)}.layer-row:first-child,.area-row:first-child{border-top:0}.layer-head{display:grid;grid-template-columns:1fr auto auto;gap:6px;align-items:center}.layer-grid{display:grid;grid-template-columns:1fr;gap:4px;margin-top:4px}.tiny-check{font-size:11px;display:flex;align-items:center;gap:4px}.area-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#modal{position:fixed;inset:0;background:rgba(2,6,23,.28);display:none;align-items:center;justify-content:center;z-index:50}#modal.open{display:flex}.modal-card{width:min(980px,calc(100vw - 40px));max-height:calc(100vh - 40px);overflow:auto;border-radius:12px;padding:14px}.modal-head{display:flex;justify-content:space-between;align-items:center}.modal-grid{display:grid;grid-template-columns:1.2fr .8fr;gap:16px}.modal-photo{height:240px;border-radius:8px;overflow:hidden;background:#e2e8f0}
+textarea{min-height:110px;resize:vertical}.coord-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.near-wrap{margin-top:10px}.near-card{display:grid;grid-template-columns:72px 1fr;gap:8px;padding:6px 0;cursor:pointer}.near-thumb{width:72px;height:52px;border-radius:8px;overflow:hidden;background:#e2e8f0}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}.small-note{font-size:12px;color:#475569}.img-missing{height:100%;display:grid;place-items:center;color:#64748b}body.add-pin-mode{cursor:crosshair}.stack{display:grid;gap:8px}.authbar{font-size:12px;display:grid;gap:6px}.toolbar-mini{display:flex;gap:6px;flex-wrap:wrap}.toolbar-mini .btn{flex:1}
+@media (max-width:1100px){.results-drawer{left:16px;top:auto;bottom:16px;width:260px;max-height:40vh}.leaflet-top.leaflet-left{left:16px;top:90px}.sidebar{width:290px}.layers-drawer{width:250px}}
+</style>
+</head>
+<body data-view="map">
+<div id="map"></div>
+
+<div class="toolbar">
+  <div class="glass switcher">
+    <button data-switch="map" class="active">Karte</button>
+    <button data-switch="db">Datenbank</button>
+  </div>
+</div>
+
+<aside class="glass sidebar">
+  <div class="brand"><h1>PragMap</h1></div>
+
+  <div class="panel-section authbar">
+    <div><strong data-role="auth-state">Lädt …</strong></div>
+    <div data-role="status">Startet …</div>
+    <div class="small-note" data-role="auth-hint">Auth wird geprüft …</div>
+    <div class="toolbar-mini">
+      <div data-role="auth-fields" class="stack" style="display:none;width:100%">
+        <input type="email" data-role="login-email" placeholder="E-Mail">
+        <input type="password" data-role="login-password" placeholder="Passwort">
+      </div>
+      <button class="btn" data-role="login-btn-password" data-action="login-password">Login</button>
+      <button class="btn" data-role="login-btn-magic" data-action="login-magic" style="display:none">Magic Link</button>
+      <button class="btn" data-role="logout-btn" data-action="logout" style="display:none">Logout</button>
+      <button class="btn" data-role="seed-btn" data-action="seed-import" style="display:none">Lokale Daten importieren</button>
+    </div>
+  </div>
+
+  <div class="panel-section">
+    <div class="panel-title">Filter</div>
+    <div class="search-row"><input data-role="search" placeholder="Suche"></div>
+    <div class="row2" style="margin-top:8px">
+      <select class="compact-select" data-role="layer-filter"></select>
+      <select class="compact-select" data-role="day-filter"></select>
+    </div>
+    <label style="margin-top:8px"><input type="checkbox" data-role="has-image"> nur mit Bild</label>
+  </div>
+
+  <details class="panel-section" open>
+    <summary>Punkte</summary>
+    <button class="btn primary" data-action="add-pin">Neuen Pin setzen</button>
+  </details>
+
+  <details class="panel-section" open>
+    <summary>Bereiche</summary>
+    <div id="areaList"></div>
+  </details>
+
+  <details class="panel-section" open>
+    <summary>Import / Export</summary>
+    <div class="stack">
+      <button class="btn" data-action="export-json">JSON exportieren</button>
+      <label>JSON importieren<input type="file" accept="application/json" data-action="import-json"></label>
+      <div class="small-note">GitHub Pages hostet das Frontend, Supabase speichert live für alle.</div>
+    </div>
+  </details>
+
+  <div class="stats">
+    <div class="stat"><b data-stat="spots">0</b>sichtbare Spots</div>
+    <div class="stat"><b data-stat="areas">0</b>aktive Bereichsfilter</div>
+  </div>
+</aside>
+
+<section id="resultsDrawer" class="glass results-drawer">
+  <div class="drawer-head"><span>Trefferliste</span><button class="tiny-btn" data-action="toggle-results">↔</button></div>
+  <div class="drawer-body"><div id="resultsList"></div></div>
+</section>
+
+<section id="layersDrawer" class="glass layers-drawer">
+  <div class="drawer-head"><span>Layer</span><div><button class="tiny-btn" data-action="new-layer">＋</button><button class="tiny-btn" data-action="toggle-layers">↔</button></div></div>
+  <div class="drawer-body"><div id="layerList"></div></div>
+</section>
+
+<section id="dbWrap" class="glass">
+  <table class="db-table">
+    <thead><tr><th>ID</th><th>Name</th><th>Geplanter Tag</th><th>Layer</th><th>Kommentar</th><th>Bild</th></tr></thead>
+    <tbody id="dbBody"></tbody>
+  </table>
+</section>
+
+<div id="modal"><div class="glass modal-card" id="modalInner"></div></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./config.js"></script>
+<script src="./app.js"></script>
+<script>initApp({mobile:false});</script>
+</body>
+</html>

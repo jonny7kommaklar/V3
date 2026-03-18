@@ -1,0 +1,973 @@
+const state = {
+  data: null,
+  map: null,
+  markerLayer: null,
+  drawItems: null,
+  activeSpotId: null,
+  filters: { search: '', layer: 'all', plannedDay: 'all', hasImage: false },
+  addPinMode: false,
+  areaVisibility: {},
+  areaFilter: {},
+  saveTimer: null,
+  supabase: null,
+  user: null,
+  authReady: false,
+  backendEnabled: false,
+  authError: '',
+  storageBucket: 'spot-images',
+  saving: false,
+  dragging: {},
+  localMode: false,
+  mobile: false,
+};
+
+const LOCAL_STORAGE_KEY = 'pragmap-local-data-v1';
+
+function escapeHtml(s) {
+  return (s ?? '').toString().replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+}
+function slugify(str) {
+  return (str || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase();
+}
+function randomId(prefix = 'id') {
+  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
+}
+function deepClone(obj) {
+  return JSON.parse(JSON.stringify(obj));
+}
+function getConfig() {
+  return window.PRAGMAP_CONFIG || {};
+}
+function isBackendConfigured() {
+  const cfg = getConfig();
+  return !!(cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY && window.supabase);
+}
+function canEdit() {
+  if (!state.backendEnabled) return true;
+  return !!state.user;
+}
+function setStatus(msg, isError = false) {
+  document.querySelectorAll('[data-role="status"]').forEach(el => {
+    el.textContent = msg;
+    el.style.color = isError ? '#b91c1c' : '';
+  });
+}
+function normalizeData(data) {
+  const out = data || {};
+  out.meta = out.meta || { title: 'PragMap' };
+  out.layers = Array.isArray(out.layers) && out.layers.length ? out.layers : [{ id: 'default', name: 'Standard', color: '#0f766e', size: 10, opacity: 0.88, visible: true, sortOrder: 0 }];
+  out.areas = Array.isArray(out.areas) ? out.areas : [];
+  out.spots = Array.isArray(out.spots) ? out.spots : [];
+
+  out.layers = out.layers.map((l, i) => ({
+    id: l.id || randomId('layer'),
+    name: l.name || `Layer ${i + 1}`,
+    color: l.color || '#0f766e',
+    size: Number(l.size ?? 10),
+    opacity: Number(l.opacity ?? 0.88),
+    visible: l.visible !== false,
+    sortOrder: Number(l.sortOrder ?? l.sort_order ?? i),
+  })).sort((a, b) => a.sortOrder - b.sortOrder);
+
+  out.areas = out.areas.map((a, i) => ({
+    id: a.id || randomId('area'),
+    name: a.name || `Bereich ${i + 1}`,
+    color: a.color || '#2563eb',
+    weight: Number(a.weight ?? 2),
+    visible: a.visible !== false,
+    useForFilter: !!(a.useForFilter ?? a.use_for_filter),
+    geojson: a.geojson || null,
+  }));
+
+  out.spots = out.spots.map((s, i) => ({
+    id: Number(s.id ?? i + 1),
+    name: s.name || 'Neuer Spot',
+    lat: Number(s.lat),
+    lon: Number(s.lon),
+    image: s.image || '',
+    imageFile: s.imageFile || s.image_file || '',
+    manualImageFile: s.manualImageFile || s.manual_image_file || '',
+    plannedDay: s.plannedDay || s.planned_day || '',
+    location: s.location || '',
+    comment: s.comment || '',
+    area: s.area || '',
+    googleMaps: s.googleMaps || s.google_maps || '',
+    layerId: s.layerId || s.layer_id || out.layers[0]?.id || 'default',
+    secondaryLayerIds: Array.isArray(s.secondaryLayerIds) ? s.secondaryLayerIds : (Array.isArray(s.secondary_layer_ids) ? s.secondary_layer_ids : []),
+  }));
+
+  for (const area of out.areas) {
+    if (!(area.id in state.areaVisibility)) state.areaVisibility[area.id] = area.visible !== false;
+    if (!(area.id in state.areaFilter)) state.areaFilter[area.id] = !!area.useForFilter;
+  }
+  return out;
+}
+
+async function initBackend() {
+  if (!isBackendConfigured()) {
+    state.backendEnabled = false;
+    state.localMode = true;
+    state.authReady = true;
+    return;
+  }
+  const cfg = getConfig();
+  state.supabase = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+  state.storageBucket = cfg.STORAGE_BUCKET || 'spot-images';
+  state.backendEnabled = true;
+
+  try {
+    const { data: { session }, error } = await state.supabase.auth.getSession();
+    if (error) throw error;
+    state.user = session?.user || null;
+  } catch (err) {
+    console.error(err);
+    state.authError = err?.message || 'Auth-Session konnte nicht geladen werden';
+  }
+  state.authReady = true;
+  state.supabase.auth.onAuthStateChange((event, sessionNow) => {
+    state.user = sessionNow?.user || null;
+    if (event === 'SIGNED_OUT') state.authError = '';
+    updateAuthUi();
+    renderAll();
+  });
+}
+
+async function loadData() {
+  if (state.backendEnabled) {
+    try {
+      const [layersRes, areasRes, spotsRes] = await Promise.all([
+        state.supabase.from('layers').select('*').order('sort_order', { ascending: true }),
+        state.supabase.from('areas').select('*').order('created_at', { ascending: true }),
+        state.supabase.from('spots').select('*').order('id', { ascending: true }),
+      ]);
+      if (layersRes.error) throw layersRes.error;
+      if (areasRes.error) throw areasRes.error;
+      if (spotsRes.error) throw spotsRes.error;
+
+      const remote = {
+        meta: { title: 'PragMap' },
+        layers: (layersRes.data || []).map(l => ({
+          id: l.id, name: l.name, color: l.color, size: l.size, opacity: Number(l.opacity), visible: l.visible, sortOrder: l.sort_order,
+        })),
+        areas: (areasRes.data || []).map(a => ({
+          id: a.id, name: a.name, color: a.color, weight: a.weight, visible: a.visible, useForFilter: a.use_for_filter, geojson: a.geojson,
+        })),
+        spots: (spotsRes.data || []).map(s => ({
+          id: s.id, name: s.name, lat: s.lat, lon: s.lon, image: s.image, imageFile: s.image_file, manualImageFile: s.manual_image_file,
+          plannedDay: s.planned_day, location: s.location, comment: s.comment, area: s.area, googleMaps: s.google_maps,
+          layerId: s.layer_id, secondaryLayerIds: s.secondary_layer_ids || [],
+        })),
+      };
+
+      const hasRemoteData = (remote.layers?.length || 0) + (remote.spots?.length || 0) + (remote.areas?.length || 0) > 0;
+      if (hasRemoteData) {
+        state.data = normalizeData(remote);
+        setStatus('Supabase verbunden');
+        return;
+      }
+    } catch (err) {
+      console.error(err);
+      setStatus('Supabase-Fehler – lokaler Fallback aktiv', true);
+    }
+  }
+
+  const localCache = localStorage.getItem(LOCAL_STORAGE_KEY);
+  if (localCache) {
+    state.data = normalizeData(JSON.parse(localCache));
+    state.localMode = true;
+    setStatus('Lokaler Modus (Browser-Speicher)');
+    return;
+  }
+
+  const res = await fetch('./data/data.json');
+  state.data = normalizeData(await res.json());
+  state.localMode = true;
+  setStatus(state.backendEnabled ? 'Supabase leer – lokale Startdaten geladen' : 'Lokaler Modus');
+}
+
+function persistLocalData() {
+  localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(state.data));
+}
+
+async function debounceSave() {
+  clearTimeout(state.saveTimer);
+  state.saveTimer = setTimeout(saveData, 450);
+}
+
+async function saveData() {
+  if (!state.data) return;
+  if (!state.backendEnabled) {
+    persistLocalData();
+    renderAll();
+    setStatus('Lokal gespeichert');
+    return;
+  }
+  if (!canEdit()) {
+    setStatus('Nur mit Login bearbeitbar', true);
+    return;
+  }
+  if (state.saving) return;
+
+  state.saving = true;
+  setStatus('Speichert …');
+
+  try {
+    const layers = state.data.layers.map((l, i) => ({
+      id: l.id, name: l.name, color: l.color, size: Number(l.size), opacity: Number(l.opacity), visible: l.visible !== false, sort_order: i,
+    }));
+    const areas = state.data.areas.map(a => ({
+      id: a.id, name: a.name, color: a.color, weight: Number(a.weight || 2), visible: a.visible !== false, use_for_filter: !!state.areaFilter[a.id], geojson: a.geojson,
+    }));
+    const spots = state.data.spots.map(s => ({
+      id: Number(s.id), name: s.name || 'Neuer Spot', lat: Number(s.lat), lon: Number(s.lon), image: s.image || '', image_file: s.imageFile || '',
+      manual_image_file: s.manualImageFile || '', planned_day: s.plannedDay || '', location: s.location || '', comment: s.comment || '', area: s.area || '',
+      google_maps: s.googleMaps || '', layer_id: s.layerId || null, secondary_layer_ids: Array.isArray(s.secondaryLayerIds) ? s.secondaryLayerIds : [],
+    }));
+
+    const [remoteLayerIdsRes, remoteAreaIdsRes, remoteSpotIdsRes] = await Promise.all([
+      state.supabase.from('layers').select('id'),
+      state.supabase.from('areas').select('id'),
+      state.supabase.from('spots').select('id'),
+    ]);
+    if (remoteLayerIdsRes.error) throw remoteLayerIdsRes.error;
+    if (remoteAreaIdsRes.error) throw remoteAreaIdsRes.error;
+    if (remoteSpotIdsRes.error) throw remoteSpotIdsRes.error;
+
+    if (layers.length) {
+      const { error } = await state.supabase.from('layers').upsert(layers);
+      if (error) throw error;
+    }
+    if (areas.length) {
+      const { error } = await state.supabase.from('areas').upsert(areas);
+      if (error) throw error;
+    }
+    if (spots.length) {
+      const { error } = await state.supabase.from('spots').upsert(spots);
+      if (error) throw error;
+    }
+
+    const currentLayerIds = new Set(layers.map(x => x.id));
+    const currentAreaIds = new Set(areas.map(x => x.id));
+    const currentSpotIds = new Set(spots.map(x => Number(x.id)));
+
+    const deleteLayerIds = (remoteLayerIdsRes.data || []).map(x => x.id).filter(id => !currentLayerIds.has(id));
+    const deleteAreaIds = (remoteAreaIdsRes.data || []).map(x => x.id).filter(id => !currentAreaIds.has(id));
+    const deleteSpotIds = (remoteSpotIdsRes.data || []).map(x => Number(x.id)).filter(id => !currentSpotIds.has(id));
+
+    if (deleteSpotIds.length) {
+      const { error } = await state.supabase.from('spots').delete().in('id', deleteSpotIds);
+      if (error) throw error;
+    }
+    if (deleteAreaIds.length) {
+      const { error } = await state.supabase.from('areas').delete().in('id', deleteAreaIds);
+      if (error) throw error;
+    }
+    if (deleteLayerIds.length) {
+      const { error } = await state.supabase.from('layers').delete().in('id', deleteLayerIds);
+      if (error) throw error;
+    }
+
+    renderAll();
+    setStatus('In Supabase gespeichert');
+  } catch (err) {
+    console.error(err);
+    setStatus(`Speichern fehlgeschlagen: ${err.message || err}`, true);
+  } finally {
+    state.saving = false;
+  }
+}
+
+function getLayerById(id) {
+  return (state.data.layers || []).find(l => l.id === id) || state.data.layers[0] || { id: 'default', name: 'Standard', color: '#0f766e', size: 10, opacity: 0.85, visible: true };
+}
+function allSpotLayerIds(spot) {
+  return [spot.layerId, ...(spot.secondaryLayerIds || [])].filter(Boolean);
+}
+function distanceMeters(a, b) {
+  const R = 6371000, toRad = x => x * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat), dLon = toRad(b.lon - a.lon);
+  const la1 = toRad(a.lat), la2 = toRad(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function localImageCandidates(spot) {
+  const safe = (spot.name || 'Spot').toString().replace(/[\\/:*?"<>|]/g, '').trim();
+  const base = `${spot.id}_${safe}`;
+  const exts = ['jpg', 'jpeg', 'png', 'webp', 'JPG', 'JPEG', 'PNG', 'WEBP'];
+  return exts.map(ext => `./images/${base}.${ext}`);
+}
+function imageCandidates(spot) {
+  const set = [];
+  if (spot.image && /^https?:/i.test(spot.image)) set.push(spot.image);
+  else if (spot.image) set.push(spot.image.startsWith('./') ? spot.image : `./images/${encodeURIComponent(spot.image)}`);
+  if (spot.imageFile) set.push(`./images/${encodeURIComponent(spot.imageFile)}`);
+  if (spot.manualImageFile) set.push(`./images/${encodeURIComponent(spot.manualImageFile)}`);
+  set.push(...localImageCandidates(spot));
+  return [...new Set(set)];
+}
+function spotHasImage(spot) {
+  return !!(spot.image || spot.imageFile || spot.manualImageFile);
+}
+function buildProgressiveImage(candidates, cls = '', empty = '') {
+  if (!candidates.length) return empty;
+  const esc = candidates.map(c => escapeHtml(c));
+  return `<img class="${cls}" src="${esc[0]}" data-candidates='${JSON.stringify(esc)}' onerror="advanceImageCandidate(this)">`;
+}
+function advanceImageCandidate(img) {
+  try {
+    const arr = JSON.parse(img.dataset.candidates || '[]');
+    let idx = Number(img.dataset.idx || 0) + 1;
+    if (idx < arr.length) {
+      img.dataset.idx = idx;
+      img.src = arr[idx];
+    } else img.style.display = 'none';
+  } catch {
+    img.style.display = 'none';
+  }
+}
+window.advanceImageCandidate = advanceImageCandidate;
+
+function matchesFilters(spot) {
+  const q = state.filters.search.trim().toLowerCase();
+  if (q) {
+    const hay = `${spot.id} ${spot.name} ${spot.comment} ${spot.plannedDay} ${spot.area} ${spot.location}`.toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  if (state.filters.layer !== 'all' && !allSpotLayerIds(spot).includes(state.filters.layer)) return false;
+  if (state.filters.plannedDay !== 'all' && (spot.plannedDay || '').trim() !== state.filters.plannedDay) return false;
+  if (state.filters.hasImage && !spotHasImage(spot)) return false;
+  const activeAreaIds = Object.entries(state.areaFilter).filter(([, v]) => v).map(([k]) => k);
+  if (activeAreaIds.length) {
+    const hit = activeAreaIds.some(id => pointInArea(spot, (state.data.areas || []).find(a => a.id === id)));
+    if (!hit) return false;
+  }
+  return true;
+}
+function pointInArea(spot, area) {
+  if (!area || !area.geojson) return false;
+  const p = turf.point([spot.lon, spot.lat]);
+  try { return turf.booleanPointInPolygon(p, area.geojson); } catch { return false; }
+}
+function nearestSpots(spot, count = 2) {
+  return [...state.data.spots].filter(s => s.id !== spot.id).map(s => ({ spot: s, d: distanceMeters(spot, s) })).sort((a, b) => a.d - b.d).slice(0, count);
+}
+
+function markerHtml(spot, layer, matched) {
+  const zoom = state.map ? state.map.getZoom() : 13;
+  const sizeBase = layer.size || 10;
+  const size = Math.max(6, Math.round(sizeBase * (zoom < 12 ? 0.75 : zoom > 15 ? 1.15 : 0.95)));
+  const opacity = matched ? (layer.opacity ?? 0.88) : 0.16;
+  const fill = matched ? layer.color : 'transparent';
+  const stroke = layer.color;
+  const labelSize = Math.max(8, Math.min(12, 6 + zoom * 0.35));
+  const label = matched ? `<div class="spot-label" style="font-size:${labelSize}px">${escapeHtml(spot.name || '')}</div>` : '';
+  return `<div class="spot-wrap">${label}<div class="spot-dot" style="width:${size}px;height:${size}px;border-color:${stroke};background:${fill};opacity:${opacity}"></div></div>`;
+}
+
+function renderAll() {
+  if (!state.data) return;
+  renderFilters();
+  renderMap();
+  renderResults();
+  renderLayers();
+  renderAreas();
+  renderDatabase();
+  updateStats();
+  updateAuthUi();
+}
+
+function updateStats() {
+  const spots = (state.data.spots || []).filter(matchesFilters).length;
+  const areas = Object.values(state.areaFilter).filter(Boolean).length;
+  document.querySelectorAll('[data-stat="spots"]').forEach(el => el.textContent = String(spots));
+  document.querySelectorAll('[data-stat="areas"]').forEach(el => el.textContent = String(areas));
+}
+
+function renderFilters() {
+  const layers = state.data.layers || [];
+  document.querySelectorAll('[data-role="layer-filter"]').forEach(sel => {
+    const current = state.filters.layer;
+    sel.innerHTML = `<option value="all">Alle Layer</option>` + layers.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
+    sel.value = current;
+  });
+  const days = [...new Set((state.data.spots || []).map(s => (s.plannedDay || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
+  document.querySelectorAll('[data-role="day-filter"]').forEach(sel => {
+    const current = state.filters.plannedDay;
+    sel.innerHTML = `<option value="all">Alle Tage</option>` + days.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
+    sel.value = current;
+  });
+}
+
+function renderMap() {
+  if (!state.map) return;
+  state.markerLayer.clearLayers();
+  state.drawItems.clearLayers();
+
+  for (const area of state.data.areas || []) {
+    if (state.areaVisibility[area.id] === false || !area.geojson) continue;
+    const areaLayer = L.geoJSON(area.geojson, {
+      style: {
+        color: area.color || '#2563eb',
+        weight: area.weight || 2,
+        fillColor: area.color || '#2563eb',
+        fillOpacity: 0.06,
+      },
+      pointToLayer: (_, latlng) => L.circle(latlng),
+    });
+    areaLayer.eachLayer(l => {
+      l._areaId = area.id;
+      l.on('click', () => openAreaEditor(area.id));
+      state.drawItems.addLayer(l);
+    });
+  }
+
+  for (const spot of state.data.spots || []) {
+    const layer = getLayerById(spot.layerId);
+    if (!layer || layer.visible === false) continue;
+    const matched = matchesFilters(spot);
+    const icon = L.divIcon({ className: 'spot-icon-host', html: markerHtml(spot, layer, matched), iconSize: [140, 32], iconAnchor: [10, 14] });
+    const marker = L.marker([spot.lat, spot.lon], { icon, keyboard: false }).addTo(state.markerLayer);
+    marker.on('click', () => openSpotModal(spot.id));
+  }
+}
+
+function renderResults() {
+  const wrap = document.getElementById('resultsList');
+  if (!wrap) return;
+  const matched = (state.data.spots || []).filter(matchesFilters);
+  wrap.innerHTML = matched.map(spot => `
+    <div class="result-card" data-spot="${spot.id}">
+      <div class="result-thumb">${buildProgressiveImage(imageCandidates(spot), '', '')}</div>
+      <div class="result-body">
+        <div class="result-name">${escapeHtml(spot.name || 'Ohne Name')}</div>
+        <div class="result-meta">${escapeHtml(spot.plannedDay || '–')} · ${escapeHtml(getLayerById(spot.layerId).name || '')}</div>
+      </div>
+    </div>`).join('');
+  wrap.querySelectorAll('[data-spot]').forEach(el => {
+    el.onclick = () => {
+      const spot = state.data.spots.find(s => s.id == el.dataset.spot);
+      if (spot) {
+        state.map.setView([spot.lat, spot.lon], Math.max(15, state.map.getZoom()));
+        openSpotModal(spot.id);
+      }
+    };
+  });
+}
+
+function renderDatabase() {
+  const body = document.getElementById('dbBody');
+  if (!body) return;
+  const matched = (state.data.spots || []).filter(matchesFilters);
+  body.innerHTML = matched.map(spot => `
+    <tr data-spot="${spot.id}">
+      <td>${spot.id}</td>
+      <td>${escapeHtml(spot.name || '')}</td>
+      <td>${escapeHtml(spot.plannedDay || '')}</td>
+      <td>${escapeHtml(getLayerById(spot.layerId).name || '')}</td>
+      <td>${escapeHtml(spot.comment || '')}</td>
+      <td>${buildProgressiveImage(imageCandidates(spot), 'db-thumb', '')}</td>
+    </tr>`).join('');
+  body.querySelectorAll('tr[data-spot]').forEach(tr => tr.onclick = () => openSpotModal(Number(tr.dataset.spot)));
+}
+
+function renderLayers() {
+  const wrap = document.getElementById('layerList');
+  if (!wrap) return;
+  wrap.innerHTML = (state.data.layers || []).map(layer => `
+    <div class="layer-row">
+      <div class="layer-head">
+        <input class="small-input" value="${escapeHtml(layer.name)}" data-layer-name="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
+        <label class="tiny-check"><input type="checkbox" ${layer.visible !== false ? 'checked' : ''} data-layer-visible="${layer.id}" ${!canEdit() ? 'disabled' : ''}> an</label>
+        <button class="tiny-btn danger" data-layer-del="${layer.id}" ${!canEdit() ? 'disabled' : ''}>×</button>
+      </div>
+      <div class="layer-grid">
+        <label>Farbe <input type="color" value="${layer.color || '#0f766e'}" data-layer-color="${layer.id}" ${!canEdit() ? 'disabled' : ''}></label>
+        <label>Größe <input type="range" min="5" max="18" step="1" value="${layer.size || 9}" data-layer-size="${layer.id}" ${!canEdit() ? 'disabled' : ''}></label>
+        <label>Deckkraft <input type="range" min="0.05" max="1" step="0.05" value="${layer.opacity ?? 0.88}" data-layer-opacity="${layer.id}" ${!canEdit() ? 'disabled' : ''}></label>
+      </div>
+    </div>`).join('');
+
+  wrap.querySelectorAll('[data-layer-name]').forEach(el => el.onchange = () => { getLayerById(el.dataset.layerName).name = el.value; debounceSave(); });
+  wrap.querySelectorAll('[data-layer-visible]').forEach(el => el.onchange = () => { getLayerById(el.dataset.layerVisible).visible = el.checked; debounceSave(); renderAll(); });
+  wrap.querySelectorAll('[data-layer-color]').forEach(el => el.oninput = () => { getLayerById(el.dataset.layerColor).color = el.value; renderAll(); debounceSave(); });
+  wrap.querySelectorAll('[data-layer-size]').forEach(el => el.oninput = () => { getLayerById(el.dataset.layerSize).size = Number(el.value); renderAll(); debounceSave(); });
+  wrap.querySelectorAll('[data-layer-opacity]').forEach(el => el.oninput = () => { getLayerById(el.dataset.layerOpacity).opacity = Number(el.value); renderAll(); debounceSave(); });
+  wrap.querySelectorAll('[data-layer-del]').forEach(el => el.onclick = () => {
+    if ((state.data.layers || []).length <= 1) return alert('Mindestens ein Layer muss bleiben.');
+    const id = el.dataset.layerDel;
+    const fallback = state.data.layers.find(l => l.id !== id)?.id || 'default';
+    state.data.spots.forEach(s => {
+      if (s.layerId === id) s.layerId = fallback;
+      s.secondaryLayerIds = (s.secondaryLayerIds || []).filter(x => x !== id);
+    });
+    state.data.layers = state.data.layers.filter(l => l.id !== id);
+    debounceSave();
+    renderAll();
+  });
+}
+
+function renderAreas() {
+  const wrap = document.getElementById('areaList');
+  if (!wrap) return;
+  wrap.innerHTML = (state.data.areas || []).map(area => `
+    <div class="area-row">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+        <div><strong>${escapeHtml(area.name)}</strong></div>
+        <button class="tiny-btn" data-area-edit="${area.id}" ${!canEdit() ? 'disabled' : ''}>Bearbeiten</button>
+      </div>
+      <div class="area-actions">
+        <label class="tiny-check"><input type="checkbox" ${state.areaVisibility[area.id] !== false ? 'checked' : ''} data-area-visible="${area.id}"> sichtbar</label>
+        <label class="tiny-check"><input type="checkbox" ${state.areaFilter[area.id] ? 'checked' : ''} data-area-filter="${area.id}"> Filter</label>
+      </div>
+    </div>`).join('');
+  wrap.querySelectorAll('[data-area-visible]').forEach(el => el.onchange = () => { state.areaVisibility[el.dataset.areaVisible] = el.checked; renderAll(); debounceSave(); });
+  wrap.querySelectorAll('[data-area-filter]').forEach(el => el.onchange = () => { state.areaFilter[el.dataset.areaFilter] = el.checked; const area = state.data.areas.find(a => a.id === el.dataset.areaFilter); if (area) area.useForFilter = el.checked; renderAll(); debounceSave(); });
+  wrap.querySelectorAll('[data-area-edit]').forEach(el => el.onclick = () => openAreaEditor(el.dataset.areaEdit));
+}
+
+function makeLayerOptions(current) {
+  return (state.data.layers || []).map(l => `<option value="${l.id}" ${l.id === current ? 'selected' : ''}>${escapeHtml(l.name)}</option>`).join('');
+}
+function makeNullableLayerOptions(current) {
+  return `<option value="">–</option>` + (state.data.layers || []).map(l => `<option value="${l.id}" ${l.id === current ? 'selected' : ''}>${escapeHtml(l.name)}</option>`).join('');
+}
+
+function switchView(view) {
+  document.body.dataset.view = view;
+  document.querySelectorAll('[data-switch]').forEach(btn => btn.classList.toggle('active', btn.dataset.switch === view));
+}
+
+function openSpotModal(id) {
+  const spot = state.data.spots.find(s => s.id === Number(id));
+  if (!spot) return;
+  state.activeSpotId = spot.id;
+  const near = nearestSpots(spot, 2).map(({ spot: s, d }) => `
+    <div class="near-card" data-near="${s.id}">
+      <div class="near-thumb">${buildProgressiveImage(imageCandidates(s), '', '')}</div>
+      <div><strong>${escapeHtml(s.name)}</strong><div>${Math.round(d)} m</div></div>
+    </div>`).join('');
+
+  const editorDisabled = !canEdit() ? 'disabled' : '';
+  document.getElementById('modalInner').innerHTML = `
+    <div class="modal-head">
+      <h3>${escapeHtml(spot.name || 'Spot')}</h3>
+      <button class="tiny-btn" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-grid">
+      <div>
+        <label>Name<input id="spotName" value="${escapeHtml(spot.name || '')}" ${editorDisabled}></label>
+        <label>Geplanter Tag<input id="spotDay" value="${escapeHtml(spot.plannedDay || '')}" ${editorDisabled}></label>
+        <label>Kommentar<textarea id="spotComment" ${editorDisabled}>${escapeHtml(spot.comment || '')}</textarea></label>
+        <label>Primärlayer<select id="spotLayer" ${editorDisabled}>${makeLayerOptions(spot.layerId)}</select></label>
+        <div class="coord-row">
+          <label>Layer 2<select id="spotLayer2" ${editorDisabled}>${makeNullableLayerOptions(spot.secondaryLayerIds?.[0] || '')}</select></label>
+          <label>Layer 3<select id="spotLayer3" ${editorDisabled}>${makeNullableLayerOptions(spot.secondaryLayerIds?.[1] || '')}</select></label>
+        </div>
+        <div class="coord-row">
+          <label>Lat<input id="spotLat" value="${spot.lat}" ${editorDisabled}></label>
+          <label>Lon<input id="spotLon" value="${spot.lon}" ${editorDisabled}></label>
+        </div>
+        <div class="coord-row">
+          <label>Google Maps / URL<input id="spotGoogleMaps" value="${escapeHtml(spot.googleMaps || '')}" ${editorDisabled}></label>
+          <label>Ort / Notiz<input id="spotLocation" value="${escapeHtml(spot.location || '')}" ${editorDisabled}></label>
+        </div>
+        <div class="coord-row">
+          <label>Dateiname lokal<input id="spotImageFile" value="${escapeHtml(spot.imageFile || '')}" ${editorDisabled}></label>
+          <label>Bild-URL<input id="spotImageUrl" value="${escapeHtml(spot.image || '')}" ${editorDisabled}></label>
+        </div>
+        ${canEdit() ? `
+          <div class="coord-row">
+            <label>Datei hochladen<input id="spotUpload" type="file" accept="image/*"></label>
+            <label style="display:flex;align-items:flex-end"><button type="button" class="btn" onclick="uploadSpotImage()">Bild hochladen</button></label>
+          </div>` : `<div class="small-note">Zum Bearbeiten bitte oben einloggen.</div>`}
+      </div>
+      <div>
+        <div class="modal-photo">${buildProgressiveImage(imageCandidates(spot), '', `<div class="img-missing">Kein Bild</div>`)}</div>
+        <div class="small-note">Neue Bilder landen in Supabase Storage. Lokale Bilder in <b>./images/</b> funktionieren weiterhin.</div>
+      </div>
+    </div>
+    <div class="near-wrap"><h4>Nächste Spots</h4>${near || '<div class="small-note">Keine</div>'}</div>
+    <div class="modal-actions">
+      ${canEdit() ? '<button class="btn" onclick="deleteSpot()">Löschen</button><button class="btn primary" onclick="saveSpotModal()">Speichern</button>' : ''}
+    </div>`;
+  document.getElementById('modal').classList.add('open');
+  document.querySelectorAll('[data-near]').forEach(el => el.onclick = () => openSpotModal(Number(el.dataset.near)));
+}
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+window.closeModal = closeModal;
+
+async function uploadSpotImage() {
+  if (!canEdit()) return;
+  const spot = state.data.spots.find(s => s.id === state.activeSpotId);
+  const input = document.getElementById('spotUpload');
+  const file = input?.files?.[0];
+  if (!spot || !file) return alert('Bitte eine Bilddatei wählen.');
+
+  if (!state.backendEnabled) {
+    alert('Bild-Upload ist nur mit Supabase-Backend verfügbar.');
+    return;
+  }
+
+  const ext = file.name.split('.').pop() || 'jpg';
+  const path = `spots/${spot.id}-${slugify(spot.name || 'spot')}-${Date.now()}.${ext}`;
+  setStatus('Lädt Bild hoch …');
+  const { error } = await state.supabase.storage.from(state.storageBucket).upload(path, file, { upsert: true });
+  if (error) {
+    console.error(error);
+    setStatus('Upload fehlgeschlagen', true);
+    return alert(error.message || 'Upload fehlgeschlagen');
+  }
+  const { data } = state.supabase.storage.from(state.storageBucket).getPublicUrl(path);
+  spot.image = data.publicUrl;
+  spot.imageFile = '';
+  debounceSave();
+  openSpotModal(spot.id);
+}
+window.uploadSpotImage = uploadSpotImage;
+
+function saveSpotModal() {
+  const spot = state.data.spots.find(s => s.id === state.activeSpotId);
+  if (!spot || !canEdit()) return;
+  spot.name = document.getElementById('spotName').value.trim();
+  spot.plannedDay = document.getElementById('spotDay').value.trim();
+  spot.comment = document.getElementById('spotComment').value.trim();
+  spot.layerId = document.getElementById('spotLayer').value;
+  spot.location = document.getElementById('spotLocation').value.trim();
+  spot.googleMaps = document.getElementById('spotGoogleMaps').value.trim();
+  spot.image = document.getElementById('spotImageUrl').value.trim();
+  spot.imageFile = document.getElementById('spotImageFile').value.trim();
+  const extra = [document.getElementById('spotLayer2').value, document.getElementById('spotLayer3').value].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i && v !== spot.layerId);
+  spot.secondaryLayerIds = extra;
+  spot.lat = Number(document.getElementById('spotLat').value);
+  spot.lon = Number(document.getElementById('spotLon').value);
+  closeModal();
+  renderAll();
+  debounceSave();
+}
+window.saveSpotModal = saveSpotModal;
+
+function deleteSpot() {
+  if (!canEdit()) return;
+  if (!confirm('Spot löschen?')) return;
+  state.data.spots = state.data.spots.filter(s => s.id !== state.activeSpotId);
+  closeModal();
+  renderAll();
+  debounceSave();
+}
+window.deleteSpot = deleteSpot;
+
+function addNewLayer() {
+  if (!canEdit()) return;
+  const id = randomId('layer');
+  state.data.layers.push({ id, name: 'Neuer Layer', color: '#2563eb', size: 9, opacity: 0.85, visible: true, sortOrder: state.data.layers.length });
+  renderAll();
+  debounceSave();
+}
+
+function beginAddPin() {
+  if (!canEdit()) return alert('Zum Hinzufügen bitte einloggen.');
+  state.addPinMode = true;
+  document.body.classList.add('add-pin-mode');
+  setStatus('Klick auf die Karte, um einen Spot zu setzen');
+}
+function addSpotAt(latlng) {
+  const nextId = Math.max(0, ...state.data.spots.map(s => Number(s.id) || 0)) + 1;
+  state.data.spots.push({
+    id: nextId,
+    name: 'Neuer Spot',
+    lat: latlng.lat,
+    lon: latlng.lng,
+    image: '',
+    imageFile: '',
+    manualImageFile: '',
+    plannedDay: '',
+    location: '',
+    comment: '',
+    area: '',
+    googleMaps: '',
+    layerId: state.data.layers[0]?.id || 'default',
+    secondaryLayerIds: [],
+  });
+  state.addPinMode = false;
+  document.body.classList.remove('add-pin-mode');
+  renderAll();
+  debounceSave();
+  setTimeout(() => openSpotModal(nextId), 120);
+}
+
+function openAreaEditor(id) {
+  const area = (state.data.areas || []).find(a => a.id === id);
+  if (!area) return;
+  if (!canEdit()) return;
+  const name = prompt('Bereichsname', area.name || 'Bereich');
+  if (name != null) {
+    area.name = name.trim() || 'Bereich';
+    renderAll();
+    debounceSave();
+  }
+}
+
+function exportJson() {
+  const blob = new Blob([JSON.stringify(state.data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'pragmap-export.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+window.exportJson = exportJson;
+
+async function importJsonFile(file) {
+  const text = await file.text();
+  state.data = normalizeData(JSON.parse(text));
+  renderAll();
+  debounceSave();
+}
+
+async function importLocalSeedToBackend() {
+  if (!state.backendEnabled || !canEdit()) return;
+  const res = await fetch('./data/data.json');
+  const data = normalizeData(await res.json());
+  state.data = data;
+  renderAll();
+  await saveData();
+}
+window.importLocalSeedToBackend = importLocalSeedToBackend;
+
+function getRedirectUrl() {
+  const cfg = getConfig();
+  const base = (cfg.GITHUB_PAGES_BASE || '').trim();
+  if (base) {
+    try {
+      return new URL(base, window.location.origin).toString();
+    } catch {}
+  }
+  return window.location.href.split('#')[0];
+}
+
+function readAuthFormValues() {
+  const email = (document.querySelector('[data-role=login-email]')?.value || getConfig().DEFAULT_LOGIN_EMAIL || '').trim();
+  const password = document.querySelector('[data-role=login-password]')?.value || '';
+  return { email, password };
+}
+
+async function loginWithPassword() {
+  if (!state.backendEnabled) return alert('Kein Supabase-Backend konfiguriert.');
+  const { email, password } = readAuthFormValues();
+  if (!email || !password) return alert('Bitte E-Mail und Passwort eingeben.');
+  setStatus('Login läuft …');
+  const { error } = await state.supabase.auth.signInWithPassword({ email, password });
+  if (error) {
+    state.authError = error.message || 'Login fehlgeschlagen';
+    updateAuthUi();
+    alert(state.authError);
+    return;
+  }
+  state.authError = '';
+  setStatus('Login erfolgreich');
+}
+window.loginWithPassword = loginWithPassword;
+
+async function loginWithMagicLink() {
+  if (!state.backendEnabled) return alert('Kein Supabase-Backend konfiguriert.');
+  const { email } = readAuthFormValues();
+  if (!email) return alert('Bitte E-Mail eingeben.');
+  const redirectTo = getRedirectUrl();
+  setStatus('Magic Link wird versendet …');
+  const { error } = await state.supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo } });
+  if (error) {
+    state.authError = error.message || 'Magic Link fehlgeschlagen';
+    updateAuthUi();
+    alert(state.authError);
+    return;
+  }
+  state.authError = '';
+  setStatus('Magic Link versendet');
+  alert('Login-Link wurde versendet. Falls nichts ankommt: in Supabase Redirect-URL und E-Mail-Provider prüfen.');
+}
+window.loginWithMagicLink = loginWithMagicLink;
+
+async function logout() {
+  if (!state.supabase) return;
+  await state.supabase.auth.signOut();
+}
+window.logout = logout;
+
+function updateAuthUi() {
+  const cfg = getConfig();
+  const pwEnabled = cfg.ENABLE_PASSWORD_LOGIN !== false;
+  const magicEnabled = !!cfg.ENABLE_MAGIC_LINK;
+  document.querySelectorAll('[data-role="auth-state"]').forEach(el => {
+    if (!state.backendEnabled) {
+      el.textContent = 'Lokaler Modus';
+    } else if (!state.authReady) {
+      el.textContent = 'Auth lädt …';
+    } else if (state.user) {
+      el.textContent = `Editor: ${state.user.email || 'eingeloggt'}`;
+    } else {
+      el.textContent = 'Öffentlich / Read only';
+    }
+  });
+  document.querySelectorAll('[data-role="auth-hint"]').forEach(el => {
+    if (!state.backendEnabled) {
+      el.textContent = 'Supabase nicht konfiguriert – Änderungen werden nur lokal im Browser gespeichert.';
+    } else if (state.user) {
+      el.textContent = 'Bearbeiten aktiv.';
+    } else if (state.authError) {
+      el.textContent = `Login-Problem: ${state.authError}`;
+    } else if (pwEnabled && magicEnabled) {
+      el.textContent = 'Passwort-Login aktiv. Magic Link optional.';
+    } else if (pwEnabled) {
+      el.textContent = 'Passwort-Login aktiv.';
+    } else if (magicEnabled) {
+      el.textContent = 'Magic Link aktiv.';
+    } else {
+      el.textContent = 'Kein Login-Verfahren aktiviert.';
+    }
+  });
+  document.querySelectorAll('[data-role="auth-fields"]').forEach(el => el.style.display = state.backendEnabled && !state.user ? '' : 'none');
+
+  document.querySelectorAll('[data-role="login-email"]').forEach(el => {
+    if (!el.value && getConfig().DEFAULT_LOGIN_EMAIL) el.value = getConfig().DEFAULT_LOGIN_EMAIL;
+  });
+  document.querySelectorAll('[data-role="login-btn-password"]').forEach(el => el.style.display = state.backendEnabled && !state.user && pwEnabled ? '' : 'none');
+  document.querySelectorAll('[data-role="login-btn-magic"]').forEach(el => el.style.display = state.backendEnabled && !state.user && magicEnabled ? '' : 'none');
+  document.querySelectorAll('[data-role="logout-btn"]').forEach(el => el.style.display = state.user ? '' : 'none');
+  document.querySelectorAll('[data-role="seed-btn"]').forEach(el => el.style.display = state.backendEnabled && state.user ? '' : 'none');
+}
+
+function makeDraggable(panelId) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  const handle = panel.querySelector('.drawer-head');
+  if (!handle) return;
+  let startX = 0, startY = 0, startL = 0, startT = 0, dragging = false;
+  const key = `dragpos:${panelId}`;
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) || 'null');
+    if (saved) {
+      panel.style.left = saved.left + 'px';
+      panel.style.top = saved.top + 'px';
+      panel.style.right = 'auto';
+    }
+  } catch {}
+  handle.style.cursor = 'move';
+  handle.addEventListener('mousedown', e => {
+    if (e.target.closest('button,input,select,label')) return;
+    dragging = true;
+    const rect = panel.getBoundingClientRect();
+    startX = e.clientX; startY = e.clientY; startL = rect.left; startT = rect.top;
+    panel.style.left = startL + 'px'; panel.style.top = startT + 'px'; panel.style.right = 'auto';
+    document.body.style.userSelect = 'none';
+  });
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const left = Math.max(4, Math.min(window.innerWidth - panel.offsetWidth - 4, startL + (e.clientX - startX)));
+    const top = Math.max(4, Math.min(window.innerHeight - 60, startT + (e.clientY - startY)));
+    panel.style.left = left + 'px';
+    panel.style.top = top + 'px';
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.userSelect = '';
+    localStorage.setItem(key, JSON.stringify({ left: parseInt(panel.style.left) || 0, top: parseInt(panel.style.top) || 0 }));
+  });
+}
+
+function setupUiEvents() {
+  document.querySelectorAll('[data-switch]').forEach(btn => btn.onclick = () => switchView(btn.dataset.switch));
+  document.querySelectorAll('[data-role="search"]').forEach(el => el.oninput = () => { state.filters.search = el.value; renderAll(); });
+  document.querySelectorAll('[data-role="layer-filter"]').forEach(el => el.onchange = () => { state.filters.layer = el.value; renderAll(); });
+  document.querySelectorAll('[data-role="day-filter"]').forEach(el => el.onchange = () => { state.filters.plannedDay = el.value; renderAll(); });
+  document.querySelectorAll('[data-role="has-image"]').forEach(el => el.onchange = () => { state.filters.hasImage = el.checked; renderAll(); });
+  document.querySelectorAll('[data-action="add-pin"]').forEach(el => el.onclick = beginAddPin);
+  document.querySelectorAll('[data-action="new-layer"]').forEach(el => el.onclick = addNewLayer);
+  document.querySelectorAll('[data-action="toggle-results"]').forEach(el => el.onclick = () => document.getElementById('resultsDrawer')?.classList.toggle('collapsed'));
+  document.querySelectorAll('[data-action="toggle-layers"]').forEach(el => el.onclick = () => document.getElementById('layersDrawer')?.classList.toggle('collapsed'));
+  document.querySelectorAll('[data-action="export-json"]').forEach(el => el.onclick = exportJson);
+  document.querySelectorAll('[data-action="login-password"]').forEach(el => el.onclick = loginWithPassword);
+  document.querySelectorAll('[data-action="login-magic"]').forEach(el => el.onclick = loginWithMagicLink);
+  document.querySelectorAll('[data-action="logout"]').forEach(el => el.onclick = logout);
+  document.querySelectorAll('[data-action="seed-import"]').forEach(el => el.onclick = importLocalSeedToBackend);
+  document.querySelectorAll('[data-role="login-password"]').forEach(el => el.addEventListener('keydown', ev => { if (ev.key === 'Enter') loginWithPassword(); }));
+  document.querySelectorAll('[data-action="import-json"]').forEach(el => el.onchange = async ev => {
+    const file = ev.target.files?.[0];
+    if (!file) return;
+    await importJsonFile(file);
+    ev.target.value = '';
+  });
+}
+
+function initMap(mobile = false) {
+  state.map = L.map('map', { zoomControl: !mobile }).setView([50.078, 14.43], mobile ? 11.5 : 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(state.map);
+  state.markerLayer = L.layerGroup().addTo(state.map);
+  state.drawItems = new L.FeatureGroup().addTo(state.map);
+
+  const drawControl = new L.Control.Draw({
+    position: 'topleft',
+    edit: { featureGroup: state.drawItems },
+    draw: {
+      marker: false, polyline: false, rectangle: false,
+      circlemarker: false,
+      polygon: { allowIntersection: false, showArea: true },
+      circle: true,
+    }
+  });
+  state.map.addControl(drawControl);
+
+  state.map.on(L.Draw.Event.CREATED, function (e) {
+    if (!canEdit()) return alert('Zum Bearbeiten bitte einloggen.');
+    const layer = e.layer;
+    const id = randomId('area');
+    layer._areaId = id;
+    state.data.areas.push({ id, name: 'Neuer Bereich', color: '#2563eb', weight: 2, visible: true, useForFilter: false, geojson: layer.toGeoJSON() });
+    state.areaVisibility[id] = true;
+    state.areaFilter[id] = false;
+    renderAll();
+    debounceSave();
+  });
+
+  state.map.on(L.Draw.Event.EDITED, function (e) {
+    if (!canEdit()) return;
+    e.layers.eachLayer(layer => {
+      const id = layer._areaId;
+      if (!id) return;
+      const area = state.data.areas.find(a => a.id === id);
+      if (area) area.geojson = layer.toGeoJSON();
+    });
+    renderAll();
+    debounceSave();
+  });
+
+  state.map.on(L.Draw.Event.DELETED, function (e) {
+    if (!canEdit()) return;
+    const ids = [];
+    e.layers.eachLayer(layer => { if (layer._areaId) ids.push(layer._areaId); });
+    if (!ids.length) return;
+    state.data.areas = state.data.areas.filter(a => !ids.includes(a.id));
+    ids.forEach(id => { delete state.areaVisibility[id]; delete state.areaFilter[id]; });
+    renderAll();
+    debounceSave();
+  });
+
+  state.map.on('click', e => { if (state.addPinMode) addSpotAt(e.latlng); });
+  state.map.on('zoomend', renderMap);
+}
+
+async function initApp({ mobile = false } = {}) {
+  state.mobile = mobile;
+  await initBackend();
+  await loadData();
+  setupUiEvents();
+  initMap(mobile);
+  renderAll();
+  switchView('map');
+  if (!mobile) {
+    makeDraggable('resultsDrawer');
+    makeDraggable('layersDrawer');
+  }
+}
+window.initApp = initApp;
