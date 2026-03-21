@@ -234,7 +234,7 @@ textarea {
   position: fixed;
   z-index: 20;
   border-radius: 10px;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .results-drawer {
