@@ -84,6 +84,24 @@ body.add-pin-mode {
   max-height: calc(100vh - 110px);
 }
 
+
+
+.spot-icon-host {
+  background: transparent;
+  border: 0;
+  pointer-events: auto;
+}
+
+.spot-wrap,
+.spot-dot,
+.spot-label {
+  pointer-events: none;
+}
+
+
+
+
+
 .brand {
   padding: 6px 4px 10px;
 }
