@@ -21,6 +21,8 @@ const state = {
   dragging: {},
   localMode: false,
   mobile: false,
+  editorOpen: false,
+  editorDirty: false,
 };
 
 const LOCAL_STORAGE_KEY = 'pragmap-local-data-v1';
@@ -664,6 +666,8 @@ function openSpotModal(id) {
   const spot = state.data.spots.find(s => s.id === Number(id));
   if (!spot) return;
   state.activeSpotId = spot.id;
+  state.editorOpen = true;
+  state.editorDirty = false;
   const near = nearestSpots(spot, 2).map(({ spot: s, d }) => `
     <div class="near-card" data-near="${s.id}">
       <div class="near-thumb">${buildProgressiveImage(imageCandidates(s), '', '')}</div>
@@ -714,9 +718,17 @@ function openSpotModal(id) {
     </div>`;
   document.getElementById('modal').classList.add('open');
   document.querySelectorAll('[data-near]').forEach(el => el.onclick = () => openSpotModal(Number(el.dataset.near)));
-}
+  document.querySelectorAll('#modal input, #modal textarea, #modal select').forEach(el => {
+  el.addEventListener('input', () => { state.editorDirty = true; });
+  el.addEventListener('change', () => { state.editorDirty = true; });
+});
+} 
 window.openSpotModal = openSpotModal;
-function closeModal() { document.getElementById('modal').classList.remove('open'); }
+function closeModal() {
+  state.editorOpen = false;
+  state.editorDirty = false;
+  document.getElementById('modal').classList.remove('open');
+}
 window.closeModal = closeModal;
 
 async function uploadSpotImage() {
@@ -766,6 +778,8 @@ function saveSpotModal() {
   closeModal();
   renderAll();
   debounceSave();
+  state.editorDirty = false;
+  state.editorOpen = false;
 }
 window.saveSpotModal = saveSpotModal;
 
@@ -1039,11 +1053,17 @@ function setupUiEvents() {
 
 async function refreshRemoteDataSilently() {
   if (!state.backendEnabled || state.saving) return;
+
+  // Während Bearbeitung keine Remote-Updates einspielen
+  if (state.editorOpen || state.editorDirty) return;
+
   try {
     const previousSpotId = state.activeSpotId;
     await loadData();
     renderAll();
-    if (previousSpotId && document.getElementById('modal')?.classList.contains('open')) openSpotModal(previousSpotId);
+    if (previousSpotId && document.getElementById('modal')?.classList.contains('open')) {
+      openSpotModal(previousSpotId);
+    }
   } catch (err) {
     console.error(err);
   }
@@ -1059,7 +1079,7 @@ function setupRealtimeSync() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'days' }, refreshRemoteDataSilently)
     .subscribe();
   clearInterval(state.syncTimer);
-  state.syncTimer = setInterval(refreshRemoteDataSilently, 20000);
+  state.syncTimer = setInterval(refreshRemoteDataSilently, 30000);
 }
 
 function initMap(mobile = false) {
