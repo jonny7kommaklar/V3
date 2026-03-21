@@ -706,7 +706,6 @@ function openSpotModal(id) {
       </div>
       <div>
         <div class="modal-photo"><div class="modal-photo-stack">${buildProgressiveImage(imageCandidates(spot), '', `<div class="img-missing">Kein Bild</div>`)}<div class="modal-layer-dots">${layerBadgeDots(spot)}</div></div></div>
-        <div class="small-note">Lokale Bilder in <b>./images/</b> funktionieren weiterhin. Supabase-Uploads schreiben die öffentliche Bild-URL intern automatisch.</div>
       </div>
     </div>
     <div class="near-wrap"><h4>Nächste Spots</h4>${near || '<div class="small-note">Keine</div>'}</div>
