@@ -1079,7 +1079,7 @@ function setupRealtimeSync() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'days' }, refreshRemoteDataSilently)
     .subscribe();
   clearInterval(state.syncTimer);
-  state.syncTimer = setInterval(refreshRemoteDataSilently, 30000);
+  state.syncTimer = setInterval(refreshRemoteDataSilently, 50000);
 }
 
 function initMap(mobile = false) {
