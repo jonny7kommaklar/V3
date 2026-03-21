@@ -462,7 +462,10 @@ function renderMap() {
     const matched = matchesFilters(spot);
     const icon = L.divIcon({ className: 'spot-icon-host', html: markerHtml(spot, layer, matched), iconSize: [140, 32], iconAnchor: [10, 14] });
     const marker = L.marker([spot.lat, spot.lon], { icon, keyboard: false, riseOnHover: true }).addTo(state.markerLayer);
-    marker.on('click', () => openSpotPopup(spot.id, marker));
+    marker.on('click', () => {
+      if (state.mobile) openSpotModal(spot.id);
+      else openSpotPopup(spot.id, marker);
+    });
   }
 }
 
@@ -493,6 +496,36 @@ function renderDatabase() {
   const body = document.getElementById('dbBody');
   if (!body) return;
   const matched = (state.data.spots || []).filter(matchesFilters);
+  if (state.mobile) {
+    body.innerHTML = matched.map(spot => `
+      <div class="db-row" data-spot-row="${spot.id}">
+        <div class="db-row-main">
+          <div class="db-id">#${spot.id}</div>
+          <div>
+            <div class="db-name">${escapeHtml(spot.name || '')}</div>
+            <div class="db-meta">${escapeHtml(spot.plannedDay || '–')} · ${escapeHtml(getLayerById(spot.layerId).name || '')}</div>
+          </div>
+          <button class="tiny-btn" data-db-toggle="${spot.id}">Details</button>
+        </div>
+        <div class="db-expand">
+          <div class="db-thumb">${buildProgressiveImage(imageCandidates(spot), '', '<div class="img-missing">Kein Bild</div>')}</div>
+          <div class="db-actions">
+            <div class="small-note">${escapeHtml(spot.comment || 'Kein Kommentar')}</div>
+            <button class="btn" data-spot-open="${spot.id}">Bearbeiten</button>
+          </div>
+        </div>
+      </div>`).join('');
+    body.querySelectorAll('[data-db-toggle]').forEach(btn => btn.onclick = ev => {
+      ev.stopPropagation();
+      body.querySelector(`[data-spot-row="${btn.dataset.dbToggle}"]`)?.classList.toggle('open');
+    });
+    body.querySelectorAll('[data-spot-open]').forEach(btn => btn.onclick = ev => {
+      ev.stopPropagation();
+      openSpotModal(Number(btn.dataset.spotOpen));
+    });
+    body.querySelectorAll('[data-spot-row]').forEach(row => row.onclick = () => row.classList.toggle('open'));
+    return;
+  }
   body.innerHTML = matched.map(spot => `
     <tr class="db-row" data-spot="${spot.id}">
       <td>${spot.id}</td>
