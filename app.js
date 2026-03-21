@@ -9,6 +9,8 @@ const state = {
   areaVisibility: {},
   areaFilter: {},
   saveTimer: null,
+  syncTimer: null,
+  realtimeChannel: null,
   supabase: null,
   user: null,
   authReady: false,
@@ -55,6 +57,7 @@ function setStatus(msg, isError = false) {
 function normalizeData(data) {
   const out = data || {};
   out.meta = out.meta || { title: 'PragMap' };
+  out.meta.days = Array.isArray(out.meta.days) ? out.meta.days : [];
   out.layers = Array.isArray(out.layers) && out.layers.length ? out.layers : [{ id: 'default', name: 'Standard', color: '#0f766e', size: 10, opacity: 0.88, visible: true, sortOrder: 0 }];
   out.areas = Array.isArray(out.areas) ? out.areas : [];
   out.spots = Array.isArray(out.spots) ? out.spots : [];
@@ -100,6 +103,8 @@ function normalizeData(data) {
     if (!(area.id in state.areaVisibility)) state.areaVisibility[area.id] = area.visible !== false;
     if (!(area.id in state.areaFilter)) state.areaFilter[area.id] = !!area.useForFilter;
   }
+  const daysFromSpots = [...new Set(out.spots.map(s => (s.plannedDay || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
+  out.meta.days = [...new Set([...(out.meta.days || []), ...daysFromSpots])].sort((a, b) => a.localeCompare(b, 'de'));
   return out;
 }
 
@@ -135,17 +140,19 @@ async function initBackend() {
 async function loadData() {
   if (state.backendEnabled) {
     try {
-      const [layersRes, areasRes, spotsRes] = await Promise.all([
+      const [layersRes, areasRes, spotsRes, daysRes] = await Promise.all([
         state.supabase.from('layers').select('*').order('sort_order', { ascending: true }),
         state.supabase.from('areas').select('*').order('created_at', { ascending: true }),
         state.supabase.from('spots').select('*').order('id', { ascending: true }),
+        state.supabase.from('days').select('*').order('sort_order', { ascending: true }),
       ]);
       if (layersRes.error) throw layersRes.error;
       if (areasRes.error) throw areasRes.error;
       if (spotsRes.error) throw spotsRes.error;
+      if (daysRes.error) throw daysRes.error;
 
       const remote = {
-        meta: { title: 'PragMap' },
+        meta: { title: 'PragMap', days: (daysRes.data || []).map(d => d.name).filter(Boolean) },
         layers: (layersRes.data || []).map(l => ({
           id: l.id, name: l.name, color: l.color, size: l.size, opacity: Number(l.opacity), visible: l.visible, sortOrder: l.sort_order,
         })),
@@ -223,15 +230,18 @@ async function saveData() {
       manual_image_file: s.manualImageFile || '', planned_day: s.plannedDay || '', location: s.location || '', comment: s.comment || '', area: s.area || '',
       google_maps: s.googleMaps || '', layer_id: s.layerId || null, secondary_layer_ids: Array.isArray(s.secondaryLayerIds) ? s.secondaryLayerIds : [],
     }));
+    const days = (state.data.meta?.days || []).map((name, i) => ({ id: slugify(name || `day-${i+1}`), name, sort_order: i }));
 
-    const [remoteLayerIdsRes, remoteAreaIdsRes, remoteSpotIdsRes] = await Promise.all([
+    const [remoteLayerIdsRes, remoteAreaIdsRes, remoteSpotIdsRes, remoteDayIdsRes] = await Promise.all([
       state.supabase.from('layers').select('id'),
       state.supabase.from('areas').select('id'),
       state.supabase.from('spots').select('id'),
+      state.supabase.from('days').select('id'),
     ]);
     if (remoteLayerIdsRes.error) throw remoteLayerIdsRes.error;
     if (remoteAreaIdsRes.error) throw remoteAreaIdsRes.error;
     if (remoteSpotIdsRes.error) throw remoteSpotIdsRes.error;
+    if (remoteDayIdsRes.error) throw remoteDayIdsRes.error;
 
     if (layers.length) {
       const { error } = await state.supabase.from('layers').upsert(layers);
@@ -245,14 +255,20 @@ async function saveData() {
       const { error } = await state.supabase.from('spots').upsert(spots);
       if (error) throw error;
     }
+    if (days.length) {
+      const { error } = await state.supabase.from('days').upsert(days);
+      if (error) throw error;
+    }
 
     const currentLayerIds = new Set(layers.map(x => x.id));
     const currentAreaIds = new Set(areas.map(x => x.id));
     const currentSpotIds = new Set(spots.map(x => Number(x.id)));
+    const currentDayIds = new Set(days.map(x => x.id));
 
     const deleteLayerIds = (remoteLayerIdsRes.data || []).map(x => x.id).filter(id => !currentLayerIds.has(id));
     const deleteAreaIds = (remoteAreaIdsRes.data || []).map(x => x.id).filter(id => !currentAreaIds.has(id));
     const deleteSpotIds = (remoteSpotIdsRes.data || []).map(x => Number(x.id)).filter(id => !currentSpotIds.has(id));
+    const deleteDayIds = (remoteDayIdsRes.data || []).map(x => x.id).filter(id => !currentDayIds.has(id));
 
     if (deleteSpotIds.length) {
       const { error } = await state.supabase.from('spots').delete().in('id', deleteSpotIds);
@@ -260,6 +276,10 @@ async function saveData() {
     }
     if (deleteAreaIds.length) {
       const { error } = await state.supabase.from('areas').delete().in('id', deleteAreaIds);
+      if (error) throw error;
+    }
+    if (deleteDayIds.length) {
+      const { error } = await state.supabase.from('days').delete().in('id', deleteDayIds);
       if (error) throw error;
     }
     if (deleteLayerIds.length) {
@@ -282,6 +302,23 @@ function getLayerById(id) {
 }
 function allSpotLayerIds(spot) {
   return [spot.layerId, ...(spot.secondaryLayerIds || [])].filter(Boolean);
+}
+function ensureGoogleMapsUrl(spot) {
+  const raw = (spot.googleMaps || '').trim();
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw) return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(raw)}`;
+  if (Number.isFinite(Number(spot.lat)) && Number.isFinite(Number(spot.lon))) return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${spot.lat},${spot.lon}`)}`;
+  return '';
+}
+function syncKnownDays() {
+  if (!state.data?.meta) return;
+  const fromSpots = state.data.spots.map(s => (s.plannedDay || '').trim()).filter(Boolean);
+  state.data.meta.days = [...new Set([...(state.data.meta.days || []), ...fromSpots])].sort((a, b) => a.localeCompare(b, 'de'));
+}
+function setSpotDaysToReplacement(oldName, replacement) {
+  state.data.spots.forEach(s => {
+    if ((s.plannedDay || '').trim() === oldName) s.plannedDay = replacement || '';
+  });
 }
 function distanceMeters(a, b) {
   const R = 6371000, toRad = x => x * Math.PI / 180;
@@ -353,14 +390,11 @@ function nearestSpots(spot, count = 2) {
 }
 
 function markerHtml(spot, layer, matched) {
-  const zoom = state.map ? state.map.getZoom() : 13;
-  const sizeBase = layer.size || 10;
-  const size = Math.max(6, Math.round(sizeBase * (zoom < 12 ? 0.75 : zoom > 15 ? 1.15 : 0.95)));
+  const size = Math.max(7, Math.round(layer.size || 10));
   const opacity = matched ? (layer.opacity ?? 0.88) : 0.16;
   const fill = matched ? layer.color : 'transparent';
   const stroke = layer.color;
-  const labelSize = Math.max(8, Math.min(12, 6 + zoom * 0.35));
-  const label = matched ? `<div class="spot-label" style="font-size:${labelSize}px">${escapeHtml(spot.name || '')}</div>` : '';
+  const label = matched ? `<div class="spot-label" style="font-size:11px">${escapeHtml(spot.name || '')}</div>` : '';
   return `<div class="spot-wrap">${label}<div class="spot-dot" style="width:${size}px;height:${size}px;border-color:${stroke};background:${fill};opacity:${opacity}"></div></div>`;
 }
 
@@ -370,6 +404,7 @@ function renderAll() {
   renderMap();
   renderResults();
   renderLayers();
+  renderDays();
   renderAreas();
   renderDatabase();
   updateStats();
@@ -390,7 +425,7 @@ function renderFilters() {
     sel.innerHTML = `<option value="all">Alle Layer</option>` + layers.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
     sel.value = current;
   });
-  const days = [...new Set((state.data.spots || []).map(s => (s.plannedDay || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
+  const days = [...new Set((state.data.meta?.days || []).map(x => (x || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
   document.querySelectorAll('[data-role="day-filter"]').forEach(sel => {
     const current = state.filters.plannedDay;
     sel.innerHTML = `<option value="all">Alle Tage</option>` + days.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
@@ -426,8 +461,8 @@ function renderMap() {
     if (!layer || layer.visible === false) continue;
     const matched = matchesFilters(spot);
     const icon = L.divIcon({ className: 'spot-icon-host', html: markerHtml(spot, layer, matched), iconSize: [140, 32], iconAnchor: [10, 14] });
-    const marker = L.marker([spot.lat, spot.lon], { icon, keyboard: false }).addTo(state.markerLayer);
-    marker.on('click', () => openSpotModal(spot.id));
+    const marker = L.marker([spot.lat, spot.lon], { icon, keyboard: false, riseOnHover: true }).addTo(state.markerLayer);
+    marker.on('click', () => openSpotPopup(spot.id, marker));
   }
 }
 
@@ -459,15 +494,18 @@ function renderDatabase() {
   if (!body) return;
   const matched = (state.data.spots || []).filter(matchesFilters);
   body.innerHTML = matched.map(spot => `
-    <tr data-spot="${spot.id}">
+    <tr class="db-row" data-spot="${spot.id}">
       <td>${spot.id}</td>
-      <td>${escapeHtml(spot.name || '')}</td>
+      <td>${escapeHtml(spot.name || '')}<div class="db-expand"><button class="tiny-btn" data-db-edit="${spot.id}">Bearbeiten</button><div class="db-photo">${buildProgressiveImage(imageCandidates(spot), '', `<div class="img-missing">Kein Bild</div>`)}</div></div></td>
       <td>${escapeHtml(spot.plannedDay || '')}</td>
       <td>${escapeHtml(getLayerById(spot.layerId).name || '')}</td>
       <td>${escapeHtml(spot.comment || '')}</td>
-      <td>${buildProgressiveImage(imageCandidates(spot), 'db-thumb', '')}</td>
     </tr>`).join('');
-  body.querySelectorAll('tr[data-spot]').forEach(tr => tr.onclick = () => openSpotModal(Number(tr.dataset.spot)));
+  body.querySelectorAll('tr[data-spot]').forEach(tr => tr.onclick = ev => {
+    if (ev.target.closest('[data-db-edit]')) return;
+    tr.classList.toggle('open');
+  });
+  body.querySelectorAll('[data-db-edit]').forEach(btn => btn.onclick = ev => { ev.stopPropagation(); openSpotModal(Number(btn.dataset.dbEdit)); });
 }
 
 function renderLayers() {
@@ -506,6 +544,38 @@ function renderLayers() {
   });
 }
 
+function renderDays() {
+  const wrap = document.getElementById('dayList');
+  if (!wrap) return;
+  syncKnownDays();
+  wrap.innerHTML = (state.data.meta?.days || []).map((day, idx) => `
+    <div class="layer-row">
+      <div class="layer-head" style="grid-template-columns:1fr auto">
+        <input class="small-input" value="${escapeHtml(day)}" data-day-name="${idx}" ${!canEdit() ? 'disabled' : ''}>
+        <button class="tiny-btn danger" data-day-del="${idx}" ${!canEdit() ? 'disabled' : ''}>×</button>
+      </div>
+    </div>`).join('');
+  wrap.querySelectorAll('[data-day-name]').forEach(el => el.onchange = () => {
+    const idx = Number(el.dataset.dayName);
+    const oldName = state.data.meta.days[idx];
+    const newName = el.value.trim();
+    if (!newName) { el.value = oldName || ''; return; }
+    state.data.meta.days[idx] = newName;
+    setSpotDaysToReplacement(oldName, newName);
+    syncKnownDays();
+    renderAll();
+    debounceSave();
+  });
+  wrap.querySelectorAll('[data-day-del]').forEach(el => el.onclick = () => {
+    const idx = Number(el.dataset.dayDel);
+    const oldName = state.data.meta.days[idx];
+    setSpotDaysToReplacement(oldName, '');
+    state.data.meta.days.splice(idx, 1);
+    renderAll();
+    debounceSave();
+  });
+}
+
 function renderAreas() {
   const wrap = document.getElementById('areaList');
   if (!wrap) return;
@@ -525,6 +595,26 @@ function renderAreas() {
   wrap.querySelectorAll('[data-area-edit]').forEach(el => el.onclick = () => openAreaEditor(el.dataset.areaEdit));
 }
 
+function layerBadgeDots(spot) {
+  const ids = allSpotLayerIds(spot).slice(0, 9);
+  return ids.map(id => {
+    const layer = getLayerById(id);
+    return `<span class="layer-chip" title="${escapeHtml(layer.name || '')}" style="background:${escapeHtml(layer.color || '#2563eb')}"></span>`;
+  }).join('');
+}
+function openSpotPopup(id, marker) {
+  const spot = state.data.spots.find(s => s.id === Number(id));
+  if (!spot || !marker) return;
+  const gmaps = ensureGoogleMapsUrl(spot);
+  const html = `
+    <div class="map-popup">
+      <div class="map-popup-photo">${buildProgressiveImage(imageCandidates(spot), '', `<div class="img-missing">Kein Bild</div>`)}</div>
+      <div class="map-popup-name">${escapeHtml(spot.name || 'Spot')}</div>
+      <div class="map-popup-layers">${layerBadgeDots(spot)}</div>
+      <div class="map-popup-actions">${gmaps ? `<a class="tiny-link" href="${escapeHtml(gmaps)}" target="_blank" rel="noopener">GMaps</a>` : ''}<button class="tiny-btn" onclick="openSpotModal(${spot.id})">Bearbeiten</button></div>
+    </div>`;
+  marker.bindPopup(html, { offset: [0, -8], closeButton: false, minWidth: 200, className: 'spot-popup-host' }).openPopup();
+}
 function makeLayerOptions(current) {
   return (state.data.layers || []).map(l => `<option value="${l.id}" ${l.id === current ? 'selected' : ''}>${escapeHtml(l.name)}</option>`).join('');
 }
@@ -548,21 +638,21 @@ function openSpotModal(id) {
     </div>`).join('');
 
   const editorDisabled = !canEdit() ? 'disabled' : '';
+  const extraSelections = Array.from({ length: 8 }, (_, i) => spot.secondaryLayerIds?.[i] || '');
+  const gmaps = ensureGoogleMapsUrl(spot);
   document.getElementById('modalInner').innerHTML = `
     <div class="modal-head">
       <h3>${escapeHtml(spot.name || 'Spot')}</h3>
       <button class="tiny-btn" onclick="closeModal()">✕</button>
     </div>
+    <div class="small-note" style="margin-bottom:10px">Spot-ID: <b>${spot.id}</b></div>
     <div class="modal-grid">
       <div>
         <label>Name<input id="spotName" value="${escapeHtml(spot.name || '')}" ${editorDisabled}></label>
-        <label>Geplanter Tag<input id="spotDay" value="${escapeHtml(spot.plannedDay || '')}" ${editorDisabled}></label>
+        <label>Geplanter Tag<select id="spotDay" ${editorDisabled}><option value="">–</option>${(state.data.meta?.days || []).map(d => `<option value="${escapeHtml(d)}" ${(spot.plannedDay || '') === d ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('')}</select></label>
         <label>Kommentar<textarea id="spotComment" ${editorDisabled}>${escapeHtml(spot.comment || '')}</textarea></label>
         <label>Primärlayer<select id="spotLayer" ${editorDisabled}>${makeLayerOptions(spot.layerId)}</select></label>
-        <div class="coord-row">
-          <label>Layer 2<select id="spotLayer2" ${editorDisabled}>${makeNullableLayerOptions(spot.secondaryLayerIds?.[0] || '')}</select></label>
-          <label>Layer 3<select id="spotLayer3" ${editorDisabled}>${makeNullableLayerOptions(spot.secondaryLayerIds?.[1] || '')}</select></label>
-        </div>
+        <div class="layer-stack">${extraSelections.map((val, idx) => `<label>Layer ${idx + 2}<select id="spotLayer${idx + 2}" ${editorDisabled}>${makeNullableLayerOptions(val)}</select></label>`).join('')}</div>
         <div class="coord-row">
           <label>Lat<input id="spotLat" value="${spot.lat}" ${editorDisabled}></label>
           <label>Lon<input id="spotLon" value="${spot.lon}" ${editorDisabled}></label>
@@ -573,17 +663,17 @@ function openSpotModal(id) {
         </div>
         <div class="coord-row">
           <label>Dateiname lokal<input id="spotImageFile" value="${escapeHtml(spot.imageFile || '')}" ${editorDisabled}></label>
-          <label>Bild-URL<input id="spotImageUrl" value="${escapeHtml(spot.image || '')}" ${editorDisabled}></label>
+          <label style="display:flex;align-items:flex-end">${gmaps ? `<a class="btn" href="${escapeHtml(gmaps)}" target="_blank" rel="noopener">In Google Maps öffnen</a>` : ''}</label>
         </div>
         ${canEdit() ? `
           <div class="coord-row">
-            <label>Datei hochladen<input id="spotUpload" type="file" accept="image/*"></label>
+            <label>Bild wählen<input id="spotUpload" type="file" accept="image/*"></label>
             <label style="display:flex;align-items:flex-end"><button type="button" class="btn" onclick="uploadSpotImage()">Bild hochladen</button></label>
           </div>` : `<div class="small-note">Zum Bearbeiten bitte oben einloggen.</div>`}
       </div>
       <div>
-        <div class="modal-photo">${buildProgressiveImage(imageCandidates(spot), '', `<div class="img-missing">Kein Bild</div>`)}</div>
-        <div class="small-note">Neue Bilder landen in Supabase Storage. Lokale Bilder in <b>./images/</b> funktionieren weiterhin.</div>
+        <div class="modal-photo"><div class="modal-photo-stack">${buildProgressiveImage(imageCandidates(spot), '', `<div class="img-missing">Kein Bild</div>`)}<div class="modal-layer-dots">${layerBadgeDots(spot)}</div></div></div>
+        <div class="small-note">Lokale Bilder in <b>./images/</b> funktionieren weiterhin. Supabase-Uploads schreiben die öffentliche Bild-URL intern automatisch.</div>
       </div>
     </div>
     <div class="near-wrap"><h4>Nächste Spots</h4>${near || '<div class="small-note">Keine</div>'}</div>
@@ -593,6 +683,7 @@ function openSpotModal(id) {
   document.getElementById('modal').classList.add('open');
   document.querySelectorAll('[data-near]').forEach(el => el.onclick = () => openSpotModal(Number(el.dataset.near)));
 }
+window.openSpotModal = openSpotModal;
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
 window.closeModal = closeModal;
 
@@ -634,10 +725,10 @@ function saveSpotModal() {
   spot.layerId = document.getElementById('spotLayer').value;
   spot.location = document.getElementById('spotLocation').value.trim();
   spot.googleMaps = document.getElementById('spotGoogleMaps').value.trim();
-  spot.image = document.getElementById('spotImageUrl').value.trim();
   spot.imageFile = document.getElementById('spotImageFile').value.trim();
-  const extra = [document.getElementById('spotLayer2').value, document.getElementById('spotLayer3').value].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i && v !== spot.layerId);
+  const extra = Array.from({ length: 8 }, (_, i) => document.getElementById(`spotLayer${i + 2}`)?.value || '').filter(Boolean).filter((v, i, a) => a.indexOf(v) === i && v !== spot.layerId);
   spot.secondaryLayerIds = extra;
+  syncKnownDays();
   spot.lat = Number(document.getElementById('spotLat').value);
   spot.lon = Number(document.getElementById('spotLon').value);
   closeModal();
@@ -655,6 +746,18 @@ function deleteSpot() {
   debounceSave();
 }
 window.deleteSpot = deleteSpot;
+
+function addNewDay() {
+  if (!canEdit()) return;
+  syncKnownDays();
+  let base = 'Neuer Tag';
+  let i = 1;
+  let name = base;
+  while ((state.data.meta.days || []).includes(name)) { i += 1; name = `${base} ${i}`; }
+  state.data.meta.days.push(name);
+  renderAll();
+  debounceSave();
+}
 
 function addNewLayer() {
   if (!canEdit()) return;
@@ -884,8 +987,10 @@ function setupUiEvents() {
   document.querySelectorAll('[data-role="has-image"]').forEach(el => el.onchange = () => { state.filters.hasImage = el.checked; renderAll(); });
   document.querySelectorAll('[data-action="add-pin"]').forEach(el => el.onclick = beginAddPin);
   document.querySelectorAll('[data-action="new-layer"]').forEach(el => el.onclick = addNewLayer);
+  document.querySelectorAll('[data-action="new-day"]').forEach(el => el.onclick = addNewDay);
   document.querySelectorAll('[data-action="toggle-results"]').forEach(el => el.onclick = () => document.getElementById('resultsDrawer')?.classList.toggle('collapsed'));
   document.querySelectorAll('[data-action="toggle-layers"]').forEach(el => el.onclick = () => document.getElementById('layersDrawer')?.classList.toggle('collapsed'));
+  document.querySelectorAll('[data-action="toggle-days"]').forEach(el => el.onclick = () => document.getElementById('daysDrawer')?.classList.toggle('collapsed'));
   document.querySelectorAll('[data-action="export-json"]').forEach(el => el.onclick = exportJson);
   document.querySelectorAll('[data-action="login-password"]').forEach(el => el.onclick = loginWithPassword);
   document.querySelectorAll('[data-action="login-magic"]').forEach(el => el.onclick = loginWithMagicLink);
@@ -898,6 +1003,31 @@ function setupUiEvents() {
     await importJsonFile(file);
     ev.target.value = '';
   });
+}
+
+async function refreshRemoteDataSilently() {
+  if (!state.backendEnabled || state.saving) return;
+  try {
+    const previousSpotId = state.activeSpotId;
+    await loadData();
+    renderAll();
+    if (previousSpotId && document.getElementById('modal')?.classList.contains('open')) openSpotModal(previousSpotId);
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function setupRealtimeSync() {
+  if (!state.backendEnabled || !state.supabase) return;
+  if (state.realtimeChannel) { try { state.supabase.removeChannel(state.realtimeChannel); } catch {} }
+  state.realtimeChannel = state.supabase.channel('pragmap-sync')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'spots' }, refreshRemoteDataSilently)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'layers' }, refreshRemoteDataSilently)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'areas' }, refreshRemoteDataSilently)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'days' }, refreshRemoteDataSilently)
+    .subscribe();
+  clearInterval(state.syncTimer);
+  state.syncTimer = setInterval(refreshRemoteDataSilently, 20000);
 }
 
 function initMap(mobile = false) {
@@ -964,10 +1094,12 @@ async function initApp({ mobile = false } = {}) {
   setupUiEvents();
   initMap(mobile);
   renderAll();
+  setupRealtimeSync();
   switchView('map');
   if (!mobile) {
     makeDraggable('resultsDrawer');
     makeDraggable('layersDrawer');
+    makeDraggable('daysDrawer');
   }
 }
 window.initApp = initApp;
