@@ -98,10 +98,11 @@ body.add-pin-mode #map{cursor:crosshair}
 
 <div class="glass dock">
   <button data-panel-btn="search" class="active"><span class="icon">🔎</span><span>Suche</span></button>
-  <button data-panel-btn="areas"><span class="icon">📐</span><span>Filter</span></button>
-  <button data-panel-btn="layers"><span class="icon">🧩</span><span>Sichtbar</span></button>
+  <button data-panel-btn="layers"><span class="icon">🧩</span><span>Layer</span></button>
+  <button data-panel-btn="areas"><span class="icon">📐</span><span>Bereiche</span></button>
   <button data-panel-btn="days"><span class="icon">📅</span><span>Tage</span></button>
   <button data-panel-btn="account"><span class="icon">👤</span><span>Login</span></button>
+  <button data-panel-btn="tools"><span class="icon">⚙️</span><span>Tools</span></button>
 </div>
 
 <section class="glass panel open" id="panel-search" data-panel="search">
@@ -120,8 +121,6 @@ body.add-pin-mode #map{cursor:crosshair}
         <select data-role="day-filter"></select>
       </div>
       <label class="checkbox"><input type="checkbox" data-role="has-image"> nur mit Bild</label>
-      <label class="checkbox"><input type="checkbox" data-role="labels-toggle" checked> Pin-Beschriftung</label>
-      <div style="display:flex;gap:8px"><button class="btn" data-action="toggle-legend">Legende</button></div>
       <div class="stats-grid">
         <div class="stat"><b data-stat="spots">0</b>Treffer</div>
         <div class="stat"><b data-stat="areas">0</b>aktive Bereiche</div>
@@ -137,8 +136,8 @@ body.add-pin-mode #map{cursor:crosshair}
 <section class="glass panel" id="panel-layers" data-panel="layers">
   <div class="panel-head">
     <div>
-      <div class="panel-title">Sichtbar</div>
-      <div class="panel-sub">Layer ein-/ausblenden und Legende festlegen.</div>
+      <div class="panel-title">Layer</div>
+      <div class="panel-sub">Sichtbarkeit, Farbe, Größe und Reihenfolge.</div>
     </div>
     <div style="display:flex;gap:8px">
       <button class="tiny-btn" data-action="new-layer">＋</button>
@@ -156,8 +155,8 @@ body.add-pin-mode #map{cursor:crosshair}
 <section class="glass panel" id="panel-areas" data-panel="areas">
   <div class="panel-head">
     <div>
-      <div class="panel-title">Filter</div>
-      <div class="panel-sub">Bereiche und sonstige Filter.</div>
+      <div class="panel-title">Bereiche</div>
+      <div class="panel-sub">Ein-/ausblenden, als Filter nutzen, direkt bearbeiten.</div>
     </div>
     <button class="panel-close" data-panel-close>–</button>
   </div>
@@ -216,11 +215,38 @@ body.add-pin-mode #map{cursor:crosshair}
   </div>
 </section>
 
+<section class="glass panel" id="panel-tools" data-panel="tools">
+  <div class="panel-head">
+    <div>
+      <div class="panel-title">Tools</div>
+      <div class="panel-sub">Import, Export und Datenbank-Ansicht.</div>
+    </div>
+    <button class="panel-close" data-panel-close>–</button>
+  </div>
+  <div class="panel-body">
+    <details class="section" open>
+      <summary>Import / Export</summary>
+      <div class="section-body stack">
+        <button class="btn" data-action="export-json">JSON exportieren</button>
+        <label>JSON importieren<input type="file" accept="application/json" data-action="import-json"></label>
+        <div class="small-note">Supabase speichert live. Ohne Backend landet alles nur lokal im Browser.</div>
+      </div>
+    </details>
+    <details class="section">
+      <summary>Tipps</summary>
+      <div class="section-body stack">
+        <div class="small-note">• Mit „＋“ setzt du direkt einen neuen Pin.</div>
+        <div class="small-note">• In der Datenbank kannst du Karteninfos kompakt aufklappen.</div>
+        <div class="small-note">• Die Karte bleibt frei, sobald du ein Panel schließt.</div>
+      </div>
+    </details>
+  </div>
+</section>
+
 <section id="dbWrap" class="glass">
   <div class="db-list" id="dbBody"></div>
 </section>
 
-<div class="glass" data-role="legend-box" style="position:fixed;right:10px;bottom:88px;z-index:55;display:none;border-radius:16px;padding:10px;max-width:220px"></div>
 <div id="modal"><div class="glass modal-card" id="modalInner"></div></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
