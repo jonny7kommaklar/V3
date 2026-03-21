@@ -23,9 +23,76 @@ const state = {
   mobile: false,
   editorOpen: false,
   editorDirty: false,
+  showLabels: true,
+  hoveredSpotId: null,
+  routeLayer: null,
+  legendOpen: false,
+  routeSettings: { selectedDay: 'all', colors: {}, visible: {} },
 };
 
 const LOCAL_STORAGE_KEY = 'pragmap-local-data-v1';
+const UI_SETTINGS_KEY = 'pragmap-ui-settings-v2';
+
+
+function loadUiSettings() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(UI_SETTINGS_KEY) || '{}');
+    state.showLabels = raw.showLabels !== false;
+    state.legendOpen = !!raw.legendOpen;
+    state.routeSettings = {
+      selectedDay: raw.routeSettings?.selectedDay || 'all',
+      colors: raw.routeSettings?.colors || {},
+      visible: raw.routeSettings?.visible || {},
+    };
+  } catch {}
+}
+function saveUiSettings() {
+  localStorage.setItem(UI_SETTINGS_KEY, JSON.stringify({
+    showLabels: state.showLabels,
+    legendOpen: state.legendOpen,
+    routeSettings: state.routeSettings,
+  }));
+}
+function getDayRouteOrder(day) {
+  const key = `routeOrder:${day}`;
+  try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch { return []; }
+}
+function setDayRouteOrder(day, order) {
+  localStorage.setItem(`routeOrder:${day}`, JSON.stringify(order.map(Number)));
+}
+function orderedDaySpots(day) {
+  const spots = (state.data?.spots || []).filter(s => (s.plannedDay || '').trim() === day);
+  const order = getDayRouteOrder(day);
+  const rank = new Map(order.map((id, i) => [Number(id), i]));
+  return [...spots].sort((a,b) => {
+    const ra = rank.has(a.id) ? rank.get(a.id) : 999999 + a.id;
+    const rb = rank.has(b.id) ? rank.get(b.id) : 999999 + b.id;
+    return ra - rb;
+  });
+}
+function syncDayRouteOrders() {
+  for (const day of (state.data?.meta?.days || [])) {
+    const ids = orderedDaySpots(day).map(s => s.id);
+    setDayRouteOrder(day, ids);
+    if (!(day in state.routeSettings.visible)) state.routeSettings.visible[day] = false;
+    if (!(day in state.routeSettings.colors)) state.routeSettings.colors[day] = '#ef4444';
+  }
+  saveUiSettings();
+}
+function routeDaysToRender() {
+  const days = new Set();
+  for (const [day, visible] of Object.entries(state.routeSettings.visible || {})) if (visible) days.add(day);
+  if (state.routeSettings.selectedDay && state.routeSettings.selectedDay !== 'all') days.add(state.routeSettings.selectedDay);
+  return [...days];
+}
+function renderLegend() {
+  document.querySelectorAll('[data-role="legend-box"]').forEach(box => {
+    if (!state.legendOpen) { box.innerHTML=''; box.style.display='none'; return; }
+    const rows = (state.data?.layers || []).filter(l => l.showInLegend).map(l => `<div class="legend-row"><span class="legend-swatch" style="background:${escapeHtml(l.color)}"></span>${escapeHtml(l.name)}</div>`).join('');
+    box.style.display='block';
+    box.innerHTML = rows || '<div class="small-note">Keine Layer markiert.</div>';
+  });
+}
 
 function escapeHtml(s) {
   return (s ?? '').toString().replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
@@ -72,6 +139,7 @@ function normalizeData(data) {
     opacity: Number(l.opacity ?? 0.88),
     visible: l.visible !== false,
     sortOrder: Number(l.sortOrder ?? l.sort_order ?? i),
+    showInLegend: !!(l.showInLegend ?? l.show_in_legend),
   })).sort((a, b) => a.sortOrder - b.sortOrder);
 
   out.areas = out.areas.map((a, i) => ({
@@ -316,6 +384,7 @@ function syncKnownDays() {
   if (!state.data?.meta) return;
   const fromSpots = state.data.spots.map(s => (s.plannedDay || '').trim()).filter(Boolean);
   state.data.meta.days = [...new Set([...(state.data.meta.days || []), ...fromSpots])].sort((a, b) => a.localeCompare(b, 'de'));
+  syncDayRouteOrders();
 }
 function setSpotDaysToReplacement(oldName, replacement) {
   state.data.spots.forEach(s => {
@@ -392,12 +461,14 @@ function nearestSpots(spot, count = 2) {
 }
 
 function markerHtml(spot, layer, matched) {
-  const size = Math.max(7, Math.round(layer.size || 10));
-  const opacity = matched ? (layer.opacity ?? 0.88) : 0.16;
-  const fill = matched ? layer.color : 'transparent';
-  const stroke = layer.color;
-  const label = matched ? `<div class="spot-label" style="font-size:11px">${escapeHtml(spot.name || '')}</div>` : '';
-  return `<div class="spot-wrap">${label}<div class="spot-dot" style="width:${size}px;height:${size}px;border-color:${stroke};background:${fill};opacity:${opacity}"></div></div>`;
+  const hovered = state.hoveredSpotId === spot.id;
+  const size = Math.max(7, Math.round((layer.size || 10) + (hovered ? 3 : 0)));
+  const opacity = hovered ? 1 : (matched ? (layer.opacity ?? 0.88) : 0.16);
+  const fill = matched || hovered ? layer.color : 'transparent';
+  const stroke = hovered ? '#111827' : layer.color;
+  const label = state.showLabels && matched ? `<div class="spot-label" style="font-size:11px">${escapeHtml(spot.name || '')}</div>` : '';
+  const extra = hovered ? 'box-shadow:0 0 0 5px rgba(255,255,255,.35),0 0 18px rgba(0,0,0,.18);' : '';
+  return `<div class="spot-wrap">${label}<div class="spot-dot" style="width:${size}px;height:${size}px;border-color:${stroke};background:${fill};opacity:${opacity};${extra}"></div></div>`;
 }
 
 function renderAll() {
@@ -409,6 +480,7 @@ function renderAll() {
   renderDays();
   renderAreas();
   renderDatabase();
+  renderLegend();
   updateStats();
   updateAuthUi();
 }
@@ -433,12 +505,18 @@ function renderFilters() {
     sel.innerHTML = `<option value="all">Alle Tage</option>` + days.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
     sel.value = current;
   });
+  document.querySelectorAll('[data-role="route-day"]').forEach(sel => {
+    sel.innerHTML = `<option value="all">Tag wählen</option>` + days.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
+    sel.value = state.routeSettings.selectedDay || 'all';
+  });
+  document.querySelectorAll('[data-role="labels-toggle"]').forEach(el => el.checked = !!state.showLabels);
 }
 
 function renderMap() {
   if (!state.map) return;
   state.markerLayer.clearLayers();
   state.drawItems.clearLayers();
+  if (state.routeLayer) state.routeLayer.clearLayers();
 
   for (const area of state.data.areas || []) {
     if (state.areaVisibility[area.id] === false || !area.geojson) continue;
@@ -464,10 +542,23 @@ function renderMap() {
     const matched = matchesFilters(spot);
     const icon = L.divIcon({ className: 'spot-icon-host', html: markerHtml(spot, layer, matched), iconSize: [140, 32], iconAnchor: [10, 14] });
     const marker = L.marker([spot.lat, spot.lon], { icon, keyboard: false, riseOnHover: true }).addTo(state.markerLayer);
+    marker.on('mouseover', () => { state.hoveredSpotId = spot.id; renderMap(); });
+    marker.on('mouseout', () => { if (state.hoveredSpotId === spot.id) { state.hoveredSpotId = null; renderMap(); } });
     marker.on('click', () => {
       if (state.mobile) openSpotModal(spot.id);
       else openSpotPopup(spot.id, marker);
     });
+  }
+
+  for (const day of routeDaysToRender()) {
+    const pts = orderedDaySpots(day).filter(s => getLayerById(s.layerId)?.visible !== false).map(s => [s.lat, s.lon]);
+    if (pts.length < 2) continue;
+    L.polyline(pts, {
+      color: state.routeSettings.colors[day] || '#ef4444',
+      weight: 3,
+      opacity: .9,
+      dashArray: state.mobile ? '8 6' : '',
+    }).addTo(state.routeLayer).bindTooltip(day, {sticky:true});
   }
 }
 
@@ -547,24 +638,22 @@ function renderLayers() {
   const wrap = document.getElementById('layerList');
   if (!wrap) return;
   wrap.innerHTML = (state.data.layers || []).map(layer => `
-    <div class="layer-row">
-      <div class="layer-head">
-        <input class="small-input" value="${escapeHtml(layer.name)}" data-layer-name="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
-        <label class="tiny-check"><input type="checkbox" ${layer.visible !== false ? 'checked' : ''} data-layer-visible="${layer.id}" ${!canEdit() ? 'disabled' : ''}> an</label>
-        <button class="tiny-btn danger" data-layer-del="${layer.id}" ${!canEdit() ? 'disabled' : ''}>×</button>
-      </div>
-      <div class="layer-grid">
-        <label>Farbe <input type="color" value="${layer.color || '#0f766e'}" data-layer-color="${layer.id}" ${!canEdit() ? 'disabled' : ''}></label>
-        <label>Größe <input type="range" min="5" max="18" step="1" value="${layer.size || 9}" data-layer-size="${layer.id}" ${!canEdit() ? 'disabled' : ''}></label>
-        <label>Deckkraft <input type="range" min="0.05" max="1" step="0.05" value="${layer.opacity ?? 0.88}" data-layer-opacity="${layer.id}" ${!canEdit() ? 'disabled' : ''}></label>
-      </div>
+    <div class="cad-layer-row">
+      <label class="tiny-check"><input type="checkbox" ${layer.visible !== false ? 'checked' : ''} data-layer-visible="${layer.id}" ${!canEdit() ? 'disabled' : ''}></label>
+      <input class="small-input cad-name" value="${escapeHtml(layer.name)}" data-layer-name="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
+      <input type="color" value="${layer.color || '#0f766e'}" data-layer-color="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
+      <input class="small-input cad-num" type="number" min="1" max="10" step="1" value="${Math.max(1, Math.min(10, Math.round(layer.size || 9)))}" data-layer-size="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
+      <input class="small-input cad-num" type="number" min="1" max="10" step="1" value="${Math.max(1, Math.min(10, Math.round((layer.opacity ?? 0.88) * 10)))}" data-layer-opacity="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
+      <label class="tiny-check cad-legend"><input type="checkbox" ${layer.showInLegend ? 'checked' : ''} data-layer-legend="${layer.id}" ${!canEdit() ? 'disabled' : ''}> Legende</label>
+      <button class="tiny-btn danger" data-layer-del="${layer.id}" ${!canEdit() ? 'disabled' : ''}>×</button>
     </div>`).join('');
 
-  wrap.querySelectorAll('[data-layer-name]').forEach(el => el.onchange = () => { getLayerById(el.dataset.layerName).name = el.value; debounceSave(); });
+  wrap.querySelectorAll('[data-layer-name]').forEach(el => el.onchange = () => { getLayerById(el.dataset.layerName).name = el.value; debounceSave(); renderLegend(); });
   wrap.querySelectorAll('[data-layer-visible]').forEach(el => el.onchange = () => { getLayerById(el.dataset.layerVisible).visible = el.checked; debounceSave(); renderAll(); });
   wrap.querySelectorAll('[data-layer-color]').forEach(el => el.oninput = () => { getLayerById(el.dataset.layerColor).color = el.value; renderAll(); debounceSave(); });
   wrap.querySelectorAll('[data-layer-size]').forEach(el => el.oninput = () => { getLayerById(el.dataset.layerSize).size = Number(el.value); renderAll(); debounceSave(); });
-  wrap.querySelectorAll('[data-layer-opacity]').forEach(el => el.oninput = () => { getLayerById(el.dataset.layerOpacity).opacity = Number(el.value); renderAll(); debounceSave(); });
+  wrap.querySelectorAll('[data-layer-opacity]').forEach(el => el.oninput = () => { getLayerById(el.dataset.layerOpacity).opacity = Math.max(.1, Math.min(1, Number(el.value) / 10)); renderAll(); debounceSave(); });
+  wrap.querySelectorAll('[data-layer-legend]').forEach(el => el.onchange = () => { getLayerById(el.dataset.layerLegend).showInLegend = el.checked; renderLegend(); debounceSave(); });
   wrap.querySelectorAll('[data-layer-del]').forEach(el => el.onclick = () => {
     if ((state.data.layers || []).length <= 1) return alert('Mindestens ein Layer muss bleiben.');
     const id = el.dataset.layerDel;
@@ -583,31 +672,63 @@ function renderDays() {
   const wrap = document.getElementById('dayList');
   if (!wrap) return;
   syncKnownDays();
-  wrap.innerHTML = (state.data.meta?.days || []).map((day, idx) => `
-    <div class="layer-row">
-      <div class="layer-head" style="grid-template-columns:1fr auto">
-        <input class="small-input" value="${escapeHtml(day)}" data-day-name="${idx}" ${!canEdit() ? 'disabled' : ''}>
-        <button class="tiny-btn danger" data-day-del="${idx}" ${!canEdit() ? 'disabled' : ''}>×</button>
-      </div>
-    </div>`).join('');
+  const days = state.data.meta?.days || [];
+  const selected = state.routeSettings.selectedDay;
+  wrap.innerHTML = `
+    ${!state.mobile ? `<div class="stack" style="margin-bottom:8px"><label>Routen-Tag<select data-role="route-day"><option value="all">Tag wählen</option>${days.map(d => `<option value="${escapeHtml(d)}" ${selected===d?'selected':''}>${escapeHtml(d)}</option>`).join('')}</select></label></div>` : ''}
+    ${days.map((day, idx) => {
+      const spots = orderedDaySpots(day);
+      const selectedDay = selected === day;
+      return `<div class="layer-row">
+        <div class="day-topline">
+          <div style="display:flex;align-items:center;gap:8px;flex:1">
+            <label class="tiny-check"><input type="checkbox" ${state.routeSettings.visible[day] ? 'checked' : ''} data-day-route-visible="${escapeHtml(day)}"> Route</label>
+            ${!state.mobile ? `<input class="small-input" value="${escapeHtml(day)}" data-day-name="${idx}" ${!canEdit() ? 'disabled' : ''}>` : `<strong>${escapeHtml(day)}</strong>`}
+          </div>
+          <input type="color" value="${escapeHtml(state.routeSettings.colors[day] || '#ef4444')}" data-day-color="${escapeHtml(day)}">
+          ${!state.mobile ? `<button class="tiny-btn ${selectedDay ? 'primary' : ''}" data-day-select="${escapeHtml(day)}">Planung</button>
+          <button class="tiny-btn danger" data-day-del="${idx}" ${!canEdit() ? 'disabled' : ''}>×</button>` : ''}
+        </div>
+        ${!state.mobile && selectedDay ? `<div class="route-plan-list" data-route-list="${escapeHtml(day)}">${spots.map((spot, i) => `<div class="route-item" draggable="true" data-route-item="${spot.id}" data-day="${escapeHtml(day)}"><span class="route-no">${i+1}</span><span>${escapeHtml(spot.name)}</span></div>`).join('') || '<div class="small-note">Noch keine Spots auf diesem Tag.</div>'}</div>` : ''}
+      </div>`;
+    }).join('')}`;
+
+  wrap.querySelectorAll('[data-role="route-day"]').forEach(el => el.onchange = () => { state.routeSettings.selectedDay = el.value; if (el.value !== 'all') state.routeSettings.visible[el.value] = true; saveUiSettings(); renderAll(); });
+  wrap.querySelectorAll('[data-day-select]').forEach(el => el.onclick = () => { state.routeSettings.selectedDay = el.dataset.daySelect; state.routeSettings.visible[el.dataset.daySelect] = true; saveUiSettings(); renderAll(); });
+  wrap.querySelectorAll('[data-day-color]').forEach(el => el.oninput = () => { state.routeSettings.colors[el.dataset.dayColor] = el.value; saveUiSettings(); renderMap(); });
+  wrap.querySelectorAll('[data-day-route-visible]').forEach(el => el.onchange = () => { state.routeSettings.visible[el.dataset.dayRouteVisible] = el.checked; saveUiSettings(); renderMap(); });
   wrap.querySelectorAll('[data-day-name]').forEach(el => el.onchange = () => {
-    const idx = Number(el.dataset.dayName);
-    const oldName = state.data.meta.days[idx];
-    const newName = el.value.trim();
+    const idx = Number(el.dataset.dayName); const oldName = state.data.meta.days[idx]; const newName = el.value.trim();
     if (!newName) { el.value = oldName || ''; return; }
-    state.data.meta.days[idx] = newName;
-    setSpotDaysToReplacement(oldName, newName);
-    syncKnownDays();
-    renderAll();
-    debounceSave();
+    state.data.meta.days[idx] = newName; setSpotDaysToReplacement(oldName, newName);
+    state.routeSettings.colors[newName] = state.routeSettings.colors[oldName] || '#ef4444';
+    state.routeSettings.visible[newName] = state.routeSettings.visible[oldName] || false;
+    if (state.routeSettings.selectedDay === oldName) state.routeSettings.selectedDay = newName;
+    localStorage.setItem(`routeOrder:${newName}`, localStorage.getItem(`routeOrder:${oldName}`) || '[]');
+    localStorage.removeItem(`routeOrder:${oldName}`); delete state.routeSettings.colors[oldName]; delete state.routeSettings.visible[oldName];
+    syncKnownDays(); saveUiSettings(); renderAll(); debounceSave();
   });
   wrap.querySelectorAll('[data-day-del]').forEach(el => el.onclick = () => {
-    const idx = Number(el.dataset.dayDel);
-    const oldName = state.data.meta.days[idx];
-    setSpotDaysToReplacement(oldName, '');
-    state.data.meta.days.splice(idx, 1);
-    renderAll();
-    debounceSave();
+    const idx = Number(el.dataset.dayDel); const oldName = state.data.meta.days[idx]; setSpotDaysToReplacement(oldName, ''); state.data.meta.days.splice(idx, 1);
+    delete state.routeSettings.colors[oldName]; delete state.routeSettings.visible[oldName]; if (state.routeSettings.selectedDay === oldName) state.routeSettings.selectedDay = 'all';
+    localStorage.removeItem(`routeOrder:${oldName}`); saveUiSettings(); renderAll(); debounceSave();
+  });
+
+  wrap.querySelectorAll('.route-item').forEach(item => {
+    item.addEventListener('dragstart', ev => { ev.dataTransfer.setData('text/plain', item.dataset.routeItem); item.classList.add('dragging'); });
+    item.addEventListener('dragend', () => item.classList.remove('dragging'));
+  });
+  wrap.querySelectorAll('[data-route-list]').forEach(list => {
+    list.addEventListener('dragover', ev => {
+      ev.preventDefault();
+      const after = [...list.querySelectorAll('.route-item:not(.dragging)')].find(el => ev.clientY <= el.getBoundingClientRect().top + el.offsetHeight/2);
+      const dragging = list.querySelector('.route-item.dragging'); if (!dragging) return;
+      if (after) list.insertBefore(dragging, after); else list.appendChild(dragging);
+    });
+    list.addEventListener('drop', () => {
+      const day = list.dataset.routeList; const order = [...list.querySelectorAll('.route-item')].map(el => Number(el.dataset.routeItem));
+      setDayRouteOrder(day, order); saveUiSettings(); renderMap(); renderDays();
+    });
   });
 }
 
@@ -1031,6 +1152,8 @@ function setupUiEvents() {
   document.querySelectorAll('[data-role="layer-filter"]').forEach(el => el.onchange = () => { state.filters.layer = el.value; renderAll(); });
   document.querySelectorAll('[data-role="day-filter"]').forEach(el => el.onchange = () => { state.filters.plannedDay = el.value; renderAll(); });
   document.querySelectorAll('[data-role="has-image"]').forEach(el => el.onchange = () => { state.filters.hasImage = el.checked; renderAll(); });
+  document.querySelectorAll('[data-role="labels-toggle"]').forEach(el => el.onchange = () => { state.showLabels = el.checked; saveUiSettings(); renderMap(); });
+  document.querySelectorAll('[data-action="toggle-legend"]').forEach(el => el.onclick = () => { state.legendOpen = !state.legendOpen; saveUiSettings(); renderLegend(); });
   document.querySelectorAll('[data-action="add-pin"]').forEach(el => el.onclick = beginAddPin);
   document.querySelectorAll('[data-action="new-layer"]').forEach(el => el.onclick = addNewLayer);
   document.querySelectorAll('[data-action="new-day"]').forEach(el => el.onclick = addNewDay);
@@ -1086,6 +1209,7 @@ function initMap(mobile = false) {
   state.map = L.map('map', { zoomControl: !mobile }).setView([50.078, 14.43], mobile ? 11.5 : 12);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(state.map);
   state.markerLayer = L.layerGroup().addTo(state.map);
+  state.routeLayer = L.layerGroup().addTo(state.map);
   state.drawItems = new L.FeatureGroup().addTo(state.map);
 
   const drawControl = new L.Control.Draw({
@@ -1141,6 +1265,7 @@ function initMap(mobile = false) {
 
 async function initApp({ mobile = false } = {}) {
   state.mobile = mobile;
+  loadUiSettings();
   await initBackend();
   await loadData();
   setupUiEvents();
@@ -1149,6 +1274,7 @@ async function initApp({ mobile = false } = {}) {
   setupRealtimeSync();
   switchView('map');
   if (!mobile) {
+    makeDraggable('filterDrawer');
     makeDraggable('resultsDrawer');
     makeDraggable('layersDrawer');
     makeDraggable('daysDrawer');
