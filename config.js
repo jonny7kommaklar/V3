@@ -1,5 +1,5 @@
 window.PRAGMAP_CONFIG = {
-  SUPABASE_URL: 'https://ggfatzjukatvojatcwiz.supabase.co',
+  SUPABASE_URL: 'sb_publishable_fegvml6I5vbrQzLamOe1fw_CeA6Qk25',
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdnZmF0emp1a2F0dm9qYXRjd2l6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxMDAxMDksImV4cCI6MjA4OTY3NjEwOX0.cwLHkm0Nof52vLqtRNIq1Z_N58zDaqk_GWe1x_36ElQ',
   STORAGE_BUCKET: 'spot-images',
   ENABLE_PASSWORD_LOGIN: true,
