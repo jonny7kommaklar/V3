@@ -1365,6 +1365,11 @@ async function initApp({ mobile = false } = {}) {
   renderAll();
   setupRealtimeSync();
   switchView('map');
+
+  if (mobile) {
+    bindLocationButton();
+    startUserLocation();
+  }
   if (!mobile) {
     makeDraggable('filterDrawer');
     makeDraggable('resultsDrawer');
