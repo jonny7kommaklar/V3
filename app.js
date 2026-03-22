@@ -28,6 +28,10 @@ const state = {
   routeLayer: null,
   legendOpen: false,
   routeSettings: { selectedDay: 'all', colors: {}, visible: {} },
+  userLocationMarker: null,
+  userAccuracyCircle: null,
+  userWatchId: null,
+  firstLocationFix: true,
 };
 
 const LOCAL_STORAGE_KEY = 'pragmap-local-data-v1';
