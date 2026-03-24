@@ -86,21 +86,6 @@ body.add-pin-mode {
 
 
 
-.spot-icon-host {
-  background: transparent;
-  border: 0;
-  pointer-events: auto;
-}
-
-.spot-wrap,
-.spot-dot,
-.spot-label {
-  pointer-events: none;
-}
-
-
-
-
 
 .brand {
   padding: 6px 4px 10px;
@@ -375,6 +360,7 @@ textarea {
 .spot-icon-host {
   background: transparent;
   border: 0;
+  overflow: visible !important;
 }
 
 .spot-wrap {
@@ -382,27 +368,43 @@ textarea {
   width: 1px;
   height: 1px;
   overflow: visible;
+  pointer-events: none;
+}
+
+.spot-hitbox {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 36px;
+  height: 36px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: transparent;
+  pointer-events: auto;
+  cursor: pointer;
 }
 
 .spot-dot {
   position: absolute;
-  left: 0;
-  top: 0;
+  left: 50%;
+  top: 50%;
   transform: translate(-50%, -50%);
   border: 1.5px solid;
   border-radius: 999px;
+  pointer-events: none;
 }
 
 .spot-label {
   position: absolute;
-  left: 0;
-  bottom: 8px;
+  left: 50%;
+  bottom: calc(100% + 3px);
   transform: translateX(-50%);
   background: rgba(255, 255, 255, 0.72);
   padding: 1px 5px;
   border-radius: 8px;
   line-height: 1.2;
   white-space: nowrap;
+  pointer-events: none;
 }
 
 /* =========================================================

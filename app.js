@@ -558,10 +558,27 @@ function renderMap() {
       iconSize: [1, 1],
       iconAnchor: [0, 0],
     });
-    const marker = L.marker([spot.lat, spot.lon], { icon, keyboard: false, riseOnHover: true }).addTo(state.markerLayer);
+    const marker = L.marker([spot.lat, spot.lon], {
+      icon,
+      keyboard: false,
+      riseOnHover: true,
+      bubblingMouseEvents: false,
+    }).addTo(state.markerLayer);
     marker.on('click', () => {
       if (state.mobile) openSpotModal(spot.id);
       else openSpotPopup(spot.id, marker);
+    });
+    marker.on('mouseover', () => {
+      if (state.hoveredSpotId !== spot.id) {
+        state.hoveredSpotId = spot.id;
+        renderMap();
+      }
+    });
+    marker.on('mouseout', () => {
+      if (state.hoveredSpotId === spot.id) {
+        state.hoveredSpotId = null;
+        renderMap();
+      }
     });
   }
 
