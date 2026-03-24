@@ -558,27 +558,9 @@ function renderMap() {
       iconSize: [1, 1],
       iconAnchor: [0, 0],
     });
-    const marker = L.marker([spot.lat, spot.lon], {
-      icon,
-      keyboard: false,
-      riseOnHover: true,
-      bubblingMouseEvents: false,
-    }).addTo(state.markerLayer);
+    const marker = L.marker([spot.lat, spot.lon], { icon, keyboard: false, riseOnHover: true }).addTo(state.markerLayer);
     marker.on('click', () => {
-      if (state.mobile) openSpotModal(spot.id);
-      else openSpotPopup(spot.id, marker);
-    });
-    marker.on('mouseover', () => {
-      if (state.hoveredSpotId !== spot.id) {
-        state.hoveredSpotId = spot.id;
-        renderMap();
-      }
-    });
-    marker.on('mouseout', () => {
-      if (state.hoveredSpotId === spot.id) {
-        state.hoveredSpotId = null;
-        renderMap();
-      }
+      openSpotPopup(spot.id, marker);
     });
   }
 
@@ -793,6 +775,7 @@ function layerBadgeDots(spot) {
 function openSpotPopup(id, marker) {
   const spot = state.data.spots.find(s => s.id === Number(id));
   if (!spot || !marker) return;
+  if (state.mobile && window.__mobilePanels?.closePanels) window.__mobilePanels.closePanels();
   const gmaps = ensureGoogleMapsUrl(spot);
   const html = `
     <div class="map-popup">
@@ -835,14 +818,15 @@ function openSpotModal(id) {
       <h3>${escapeHtml(spot.name || 'Spot')}</h3>
       <button class="tiny-btn" onclick="closeModal()">✕</button>
     </div>
-    <div class="small-note" style="margin-bottom:10px">Spot-ID: <b>${spot.id}</b></div>
+    <div class="modal-photo"><div class="modal-photo-stack">${buildProgressiveImage(imageCandidates(spot), '', `<div class="img-missing">Kein Bild</div>`)}<div class="modal-layer-dots">${layerBadgeDots(spot)}</div></div></div>
+    <div class="small-note" style="margin:10px 0">Spot-ID: <b>${spot.id}</b></div>
     <div class="modal-grid">
       <div>
         <label>Name<input id="spotName" value="${escapeHtml(spot.name || '')}" ${editorDisabled}></label>
         <label>Geplanter Tag<select id="spotDay" ${editorDisabled}><option value="">–</option>${(state.data.meta?.days || []).map(d => `<option value="${escapeHtml(d)}" ${(spot.plannedDay || '') === d ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('')}</select></label>
-        <label>Kommentar<textarea id="spotComment" ${editorDisabled}>${escapeHtml(spot.comment || '')}</textarea></label>
         <label>Primärlayer<select id="spotLayer" ${editorDisabled}>${makeLayerOptions(spot.layerId)}</select></label>
         <div class="layer-stack">${extraSelections.map((val, idx) => `<label>Layer ${idx + 2}<select id="spotLayer${idx + 2}" ${editorDisabled}>${makeNullableLayerOptions(val)}</select></label>`).join('')}</div>
+        <label>Kommentar<textarea id="spotComment" ${editorDisabled}>${escapeHtml(spot.comment || '')}</textarea></label>
         <div class="coord-row">
           <label>Lat<input id="spotLat" value="${spot.lat}" ${editorDisabled}></label>
           <label>Lon<input id="spotLon" value="${spot.lon}" ${editorDisabled}></label>
@@ -860,9 +844,6 @@ function openSpotModal(id) {
             <label>Bild wählen<input id="spotUpload" type="file" accept="image/*"></label>
             <label style="display:flex;align-items:flex-end"><button type="button" class="btn" onclick="uploadSpotImage()">Bild hochladen</button></label>
           </div>` : `<div class="small-note">Zum Bearbeiten bitte oben einloggen.</div>`}
-      </div>
-      <div>
-        <div class="modal-photo"><div class="modal-photo-stack">${buildProgressiveImage(imageCandidates(spot), '', `<div class="img-missing">Kein Bild</div>`)}<div class="modal-layer-dots">${layerBadgeDots(spot)}</div></div></div>
       </div>
     </div>
     <div class="near-wrap"><h4>Nächste Spots</h4>${near || '<div class="small-note">Keine</div>'}</div>
