@@ -480,7 +480,7 @@ function markerHtml(spot, layer, matched) {
   const stroke = hovered ? '#111827' : layer.color;
   const label = state.showLabels && matched ? `<div class="spot-label" style="font-size:11px">${escapeHtml(spot.name || '')}</div>` : '';
   const extra = hovered ? 'box-shadow:0 0 0 5px rgba(255,255,255,.35),0 0 18px rgba(0,0,0,.18);' : '';
-  return `<div class="spot-wrap" data-spot-id="${spot.id}"><div class="spot-dot" style="width:${size}px;height:${size}px;border-color:${stroke};background:${fill};opacity:${opacity};${extra}"></div>${label}</div>`;
+  return `<div class="spot-wrap" data-spot-id="${spot.id}"><div class="spot-hitbox"><div class="spot-dot" style="width:${size}px;height:${size}px;border-color:${stroke};background:${fill};opacity:${opacity};${extra}"></div></div>${label}</div>`;
 }
 
 function renderAll() {
