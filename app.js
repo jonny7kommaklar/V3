@@ -371,7 +371,19 @@ function getLayerById(id) {
   return (state.data.layers || []).find(l => l.id === id) || state.data.layers[0] || { id: 'default', name: 'Standard', color: '#0f766e', size: 10, opacity: 0.85, visible: true };
 }
 function allSpotLayerIds(spot) {
-  return [spot.layerId, ...(spot.secondaryLayerIds || [])].filter(Boolean);
+  return [...new Set([spot.layerId, ...(spot.secondaryLayerIds || [])].filter(Boolean))];
+}
+function spotAssignedLayers(spot) {
+  return allSpotLayerIds(spot).map(getLayerById).filter(Boolean);
+}
+function isSpotVisibleByLayer(spot) {
+  const layers = spotAssignedLayers(spot);
+  if (!layers.length) return true;
+  return layers.some(layer => layer.visible !== false);
+}
+function getDisplayLayerForSpot(spot) {
+  const layers = spotAssignedLayers(spot);
+  return layers.find(layer => layer.visible !== false) || getLayerById(spot.layerId);
 }
 function ensureGoogleMapsUrl(spot) {
   const raw = (spot.googleMaps || '').trim();
@@ -537,13 +549,11 @@ function renderMap() {
   }
 
   for (const spot of state.data.spots || []) {
-    const layer = getLayerById(spot.layerId);
-    if (!layer || layer.visible === false) continue;
+    const layer = getDisplayLayerForSpot(spot);
+    if (!layer || !isSpotVisibleByLayer(spot)) continue;
     const matched = matchesFilters(spot);
     const icon = L.divIcon({ className: 'spot-icon-host', html: markerHtml(spot, layer, matched), iconSize: [140, 32], iconAnchor: [10, 14] });
     const marker = L.marker([spot.lat, spot.lon], { icon, keyboard: false, riseOnHover: true }).addTo(state.markerLayer);
-    marker.on('mouseover', () => { state.hoveredSpotId = spot.id; renderMap(); });
-    marker.on('mouseout', () => { if (state.hoveredSpotId === spot.id) { state.hoveredSpotId = null; renderMap(); } });
     marker.on('click', () => {
       if (state.mobile) openSpotModal(spot.id);
       else openSpotPopup(spot.id, marker);
@@ -551,7 +561,7 @@ function renderMap() {
   }
 
   for (const day of routeDaysToRender()) {
-    const pts = orderedDaySpots(day).filter(s => getLayerById(s.layerId)?.visible !== false).map(s => [s.lat, s.lon]);
+    const pts = orderedDaySpots(day).filter(isSpotVisibleByLayer).map(s => [s.lat, s.lon]);
     if (pts.length < 2) continue;
     L.polyline(pts, {
       color: state.routeSettings.colors[day] || '#ef4444',
@@ -571,7 +581,7 @@ function renderResults() {
       <div class="result-thumb">${buildProgressiveImage(imageCandidates(spot), '', '')}</div>
       <div class="result-body">
         <div class="result-name">${escapeHtml(spot.name || 'Ohne Name')}</div>
-        <div class="result-meta">${escapeHtml(spot.plannedDay || '–')} · ${escapeHtml(getLayerById(spot.layerId).name || '')}</div>
+        <div class="result-meta">${escapeHtml(spot.plannedDay || '–')} · ${escapeHtml(getDisplayLayerForSpot(spot).name || '')}</div>
       </div>
     </div>`).join('');
   wrap.querySelectorAll('[data-spot]').forEach(el => {
@@ -596,7 +606,7 @@ function renderDatabase() {
           <div class="db-id">#${spot.id}</div>
           <div>
             <div class="db-name">${escapeHtml(spot.name || '')}</div>
-            <div class="db-meta">${escapeHtml(spot.plannedDay || '–')} · ${escapeHtml(getLayerById(spot.layerId).name || '')}</div>
+            <div class="db-meta">${escapeHtml(spot.plannedDay || '–')} · ${escapeHtml(getDisplayLayerForSpot(spot).name || '')}</div>
           </div>
           <button class="tiny-btn" data-db-toggle="${spot.id}">Details</button>
         </div>
@@ -624,7 +634,7 @@ function renderDatabase() {
       <td>${spot.id}</td>
       <td>${escapeHtml(spot.name || '')}<div class="db-expand"><button class="tiny-btn" data-db-edit="${spot.id}">Bearbeiten</button><div class="db-photo">${buildProgressiveImage(imageCandidates(spot), '', `<div class="img-missing">Kein Bild</div>`)}</div></div></td>
       <td>${escapeHtml(spot.plannedDay || '')}</td>
-      <td>${escapeHtml(getLayerById(spot.layerId).name || '')}</td>
+      <td>${escapeHtml(getDisplayLayerForSpot(spot).name || '')}</td>
       <td>${escapeHtml(spot.comment || '')}</td>
     </tr>`).join('');
   body.querySelectorAll('tr[data-spot]').forEach(tr => tr.onclick = ev => {
