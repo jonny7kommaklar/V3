@@ -378,24 +378,31 @@ textarea {
 }
 
 .spot-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  transform: translateY(-10px);
+  position: relative;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
 }
 
 .spot-dot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
   border: 1.5px solid;
   border-radius: 999px;
 }
 
 .spot-label {
+  position: absolute;
+  left: 0;
+  bottom: 8px;
+  transform: translateX(-50%);
   background: rgba(255, 255, 255, 0.72);
   padding: 1px 5px;
   border-radius: 8px;
   line-height: 1.2;
   white-space: nowrap;
-  margin-bottom: 2px;
 }
 
 /* =========================================================

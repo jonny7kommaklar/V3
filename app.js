@@ -28,10 +28,6 @@ const state = {
   routeLayer: null,
   legendOpen: false,
   routeSettings: { selectedDay: 'all', colors: {}, visible: {} },
-  userLocationMarker: null,
-  userAccuracyCircle: null,
-  userWatchId: null,
-  firstLocationFix: true,
 };
 
 const LOCAL_STORAGE_KEY = 'pragmap-local-data-v1';
@@ -484,7 +480,7 @@ function markerHtml(spot, layer, matched) {
   const stroke = hovered ? '#111827' : layer.color;
   const label = state.showLabels && matched ? `<div class="spot-label" style="font-size:11px">${escapeHtml(spot.name || '')}</div>` : '';
   const extra = hovered ? 'box-shadow:0 0 0 5px rgba(255,255,255,.35),0 0 18px rgba(0,0,0,.18);' : '';
-  return `<div class="spot-wrap">${label}<div class="spot-dot" style="width:${size}px;height:${size}px;border-color:${stroke};background:${fill};opacity:${opacity};${extra}"></div></div>`;
+  return `<div class="spot-wrap" data-spot-id="${spot.id}"><div class="spot-dot" style="width:${size}px;height:${size}px;border-color:${stroke};background:${fill};opacity:${opacity};${extra}"></div>${label}</div>`;
 }
 
 function renderAll() {
@@ -556,7 +552,12 @@ function renderMap() {
     const layer = getDisplayLayerForSpot(spot);
     if (!layer || !isSpotVisibleByLayer(spot)) continue;
     const matched = matchesFilters(spot);
-    const icon = L.divIcon({ className: 'spot-icon-host', html: markerHtml(spot, layer, matched), iconSize: [140, 32], iconAnchor: [10, 14] });
+    const icon = L.divIcon({
+      className: 'spot-icon-host',
+      html: markerHtml(spot, layer, matched),
+      iconSize: [1, 1],
+      iconAnchor: [0, 0],
+    });
     const marker = L.marker([spot.lat, spot.lon], { icon, keyboard: false, riseOnHover: true }).addTo(state.markerLayer);
     marker.on('click', () => {
       if (state.mobile) openSpotModal(spot.id);
@@ -1160,94 +1161,6 @@ function makeDraggable(panelId) {
   });
 }
 
-function startUserLocation() {
-  if (!state.mobile) return;
-  if (!navigator.geolocation) {
-    console.log('Geolocation wird vom Browser nicht unterstützt.');
-    return;
-  }
-  if (state.userWatchId != null) return;
-
-  state.userWatchId = navigator.geolocation.watchPosition(
-    pos => {
-      const lat = pos.coords.latitude;
-      const lon = pos.coords.longitude;
-      const acc = Number(pos.coords.accuracy || 0);
-
-      const markerLatLng = [lat, lon];
-
-      if (!state.userLocationMarker) {
-        state.userAccuracyCircle = L.circle(markerLatLng, {
-          radius: acc,
-          color: '#2563eb',
-          weight: 1,
-          opacity: 0.7,
-          fillColor: '#60a5fa',
-          fillOpacity: 0.14,
-          interactive: false,
-        }).addTo(state.map);
-
-        state.userLocationMarker = L.circleMarker(markerLatLng, {
-          radius: 8,
-          color: '#ffffff',
-          weight: 2,
-          fillColor: '#2563eb',
-          fillOpacity: 1,
-        }).addTo(state.map);
-      } else {
-        state.userLocationMarker.setLatLng(markerLatLng);
-        if (state.userAccuracyCircle) {
-          state.userAccuracyCircle.setLatLng(markerLatLng);
-          state.userAccuracyCircle.setRadius(acc);
-        }
-      }
-    },
-    err => {
-      console.log('Standortfehler:', err);
-    },
-    {
-      enableHighAccuracy: true,
-      maximumAge: 5000,
-      timeout: 10000,
-    }
-  );
-}
-
-function centerToUserLocation() {
-  if (!state.map) return;
-
-  if (state.userLocationMarker) {
-    state.map.setView(state.userLocationMarker.getLatLng(), Math.max(state.map.getZoom(), 16));
-    return;
-  }
-
-  if (!navigator.geolocation) return;
-
-  navigator.geolocation.getCurrentPosition(
-    pos => {
-      const lat = pos.coords.latitude;
-      const lon = pos.coords.longitude;
-      state.map.setView([lat, lon], 16);
-      startUserLocation();
-    },
-    err => {
-      console.log('Standort konnte nicht abgerufen werden:', err);
-      alert('Standort konnte nicht abgerufen werden. Bitte Browser-Standort freigeben.');
-    },
-    {
-      enableHighAccuracy: true,
-      maximumAge: 0,
-      timeout: 10000,
-    }
-  );
-}
-
-function bindLocationButton() {
-  const btn = document.getElementById('locateMeBtn');
-  if (!btn) return;
-  btn.onclick = () => centerToUserLocation();
-}
-
 function setupUiEvents() {
   document.querySelectorAll('[data-switch]').forEach(btn => btn.onclick = () => switchView(btn.dataset.switch));
   document.querySelectorAll('[data-role="search"]').forEach(el => el.oninput = () => { state.filters.search = el.value; renderAll(); });
@@ -1375,11 +1288,6 @@ async function initApp({ mobile = false } = {}) {
   renderAll();
   setupRealtimeSync();
   switchView('map');
-
-  if (mobile) {
-    bindLocationButton();
-    startUserLocation();
-  }
   if (!mobile) {
     makeDraggable('filterDrawer');
     makeDraggable('resultsDrawer');
