@@ -28,6 +28,10 @@ const state = {
   routeLayer: null,
   legendOpen: false,
   routeSettings: { selectedDay: 'all', colors: {}, visible: {} },
+  tempAddPinMarker: null,
+  pendingAddPinLatLng: null,
+  uiOpacity: { menu: 0.74, panel: 0.92 },
+  dbSort: { field: 'name', dir: 'asc' },
 };
 
 const LOCAL_STORAGE_KEY = 'pragmap-local-data-v1';
@@ -44,6 +48,14 @@ function loadUiSettings() {
       colors: raw.routeSettings?.colors || {},
       visible: raw.routeSettings?.visible || {},
     };
+    state.uiOpacity = {
+      menu: Math.max(0.2, Math.min(1, Number(raw.uiOpacity?.menu ?? 0.74))),
+      panel: Math.max(0.2, Math.min(1, Number(raw.uiOpacity?.panel ?? 0.92))),
+    };
+    state.dbSort = {
+      field: raw.dbSort?.field || 'name',
+      dir: raw.dbSort?.dir === 'desc' ? 'desc' : 'asc',
+    };
   } catch {}
 }
 function saveUiSettings() {
@@ -51,7 +63,19 @@ function saveUiSettings() {
     showLabels: state.showLabels,
     legendOpen: state.legendOpen,
     routeSettings: state.routeSettings,
+    uiOpacity: state.uiOpacity,
+    dbSort: state.dbSort,
   }));
+}
+function applyUiOpacity() {
+  document.documentElement.style.setProperty('--bg', `rgba(255,255,255,${state.uiOpacity.menu})`);
+  document.documentElement.style.setProperty('--bg-2', `rgba(255,255,255,${state.uiOpacity.panel})`);
+  document.querySelectorAll('.dock button, .locate-btn').forEach(el => {
+    el.style.background = `rgba(255,255,255,${Math.max(0.2, Math.min(1, state.uiOpacity.menu + 0.04))})`;
+  });
+  document.querySelectorAll('.panel,.switcher,#dbWrap,.add-pin-confirm,.modal-card').forEach(el => {
+    el.style.background = `rgba(255,255,255,${state.uiOpacity.panel})`;
+  });
 }
 function getDayRouteOrder(day) {
   const key = `routeOrder:${day}`;
@@ -167,6 +191,7 @@ function normalizeData(data) {
     googleMaps: s.googleMaps || s.google_maps || '',
     layerId: s.layerId || s.layer_id || out.layers[0]?.id || 'default',
     secondaryLayerIds: Array.isArray(s.secondaryLayerIds) ? s.secondaryLayerIds : (Array.isArray(s.secondary_layer_ids) ? s.secondary_layer_ids : []),
+    updatedAt: s.updatedAt || s.updated_at || s.modified_at || '',
   }));
 
   for (const area of out.areas) {
@@ -232,7 +257,7 @@ async function loadData() {
         spots: (spotsRes.data || []).map(s => ({
           id: s.id, name: s.name, lat: s.lat, lon: s.lon, image: s.image, imageFile: s.image_file, manualImageFile: s.manual_image_file,
           plannedDay: s.planned_day, location: s.location, comment: s.comment, area: s.area, googleMaps: s.google_maps,
-          layerId: s.layer_id, secondaryLayerIds: s.secondary_layer_ids || [],
+          layerId: s.layer_id, secondaryLayerIds: s.secondary_layer_ids || [], updatedAt: s.updated_at || s.modified_at || '',
         })),
       };
 
@@ -298,7 +323,7 @@ async function saveData() {
     const spots = state.data.spots.map(s => ({
       id: Number(s.id), name: s.name || 'Neuer Spot', lat: Number(s.lat), lon: Number(s.lon), image: s.image || '', image_file: s.imageFile || '',
       manual_image_file: s.manualImageFile || '', planned_day: s.plannedDay || '', location: s.location || '', comment: s.comment || '', area: s.area || '',
-      google_maps: s.googleMaps || '', layer_id: s.layerId || null, secondary_layer_ids: Array.isArray(s.secondaryLayerIds) ? s.secondaryLayerIds : [],
+      google_maps: s.googleMaps || '', layer_id: s.layerId || null, secondary_layer_ids: Array.isArray(s.secondaryLayerIds) ? s.secondaryLayerIds : [], updated_at: s.updatedAt || new Date().toISOString(),
     }));
     const days = (state.data.meta?.days || []).map((name, i) => ({ id: slugify(name || `day-${i+1}`), name, sort_order: i }));
 
@@ -579,7 +604,7 @@ function renderMap() {
 function renderResults() {
   const wrap = document.getElementById('resultsList');
   if (!wrap) return;
-  const matched = (state.data.spots || []).filter(matchesFilters);
+  const matched = sortedMatchedSpots();
   wrap.innerHTML = matched.map(spot => `
     <div class="result-card" data-spot="${spot.id}">
       <div class="result-thumb">${buildProgressiveImage(imageCandidates(spot), '', '')}</div>
@@ -599,6 +624,32 @@ function renderResults() {
   });
 }
 
+
+function getSpotLayerCount(spot) {
+  return allSpotLayerIds(spot).length;
+}
+function sortedMatchedSpots() {
+  const matched = sortedMatchedSpots();
+  const dir = state.dbSort.dir === 'desc' ? -1 : 1;
+  const field = state.dbSort.field || 'name';
+  return [...matched].sort((a, b) => {
+    let va, vb;
+    if (field === 'updatedAt') {
+      va = Date.parse(a.updatedAt || '') || 0;
+      vb = Date.parse(b.updatedAt || '') || 0;
+    } else if (field === 'layerCount') {
+      va = getSpotLayerCount(a);
+      vb = getSpotLayerCount(b);
+    } else {
+      va = (a.name || '').toString().toLocaleLowerCase('de');
+      vb = (b.name || '').toString().toLocaleLowerCase('de');
+    }
+    if (va < vb) return -1 * dir;
+    if (va > vb) return 1 * dir;
+    return (Number(a.id) - Number(b.id)) * dir;
+  });
+}
+
 function renderDatabase() {
   const body = document.getElementById('dbBody');
   if (!body) return;
@@ -610,7 +661,7 @@ function renderDatabase() {
           <div class="db-id">#${spot.id}</div>
           <div>
             <div class="db-name">${escapeHtml(spot.name || '')}</div>
-            <div class="db-meta">${escapeHtml(spot.plannedDay || '–')} · ${escapeHtml(getDisplayLayerForSpot(spot).name || '')}</div>
+            <div class="db-meta">${escapeHtml(spot.plannedDay || '–')} · ${escapeHtml(getDisplayLayerForSpot(spot).name || '')} · ${getSpotLayerCount(spot)} Layer</div>
           </div>
           <button class="tiny-btn" data-db-toggle="${spot.id}">Details</button>
         </div>
@@ -651,22 +702,43 @@ function renderDatabase() {
 function renderLayers() {
   const wrap = document.getElementById('layerList');
   if (!wrap) return;
-  wrap.innerHTML = (state.data.layers || []).map(layer => `
-    <div class="cad-layer-row">
-      <label class="tiny-check"><input type="checkbox" ${layer.visible !== false ? 'checked' : ''} data-layer-visible="${layer.id}" ${!canEdit() ? 'disabled' : ''}></label>
-      <input class="small-input cad-name" value="${escapeHtml(layer.name)}" data-layer-name="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
-      <input type="color" value="${layer.color || '#0f766e'}" data-layer-color="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
-      <input class="small-input cad-num" type="number" min="1" max="10" step="1" value="${Math.max(1, Math.min(10, Math.round(layer.size || 9)))}" data-layer-size="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
-      <input class="small-input cad-num" type="number" min="1" max="10" step="1" value="${Math.max(1, Math.min(10, Math.round((layer.opacity ?? 0.88) * 10)))}" data-layer-opacity="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
-      <label class="tiny-check cad-legend"><input type="checkbox" ${layer.showInLegend ? 'checked' : ''} data-layer-legend="${layer.id}" ${!canEdit() ? 'disabled' : ''}> Legende</label>
-      <button class="tiny-btn danger" data-layer-del="${layer.id}" ${!canEdit() ? 'disabled' : ''}>×</button>
-    </div>`).join('');
+  const rows = (state.data.layers || []).map(layer => {
+    const delBtn = `<button class="tiny-btn danger" data-layer-del="${layer.id}" ${!canEdit() ? 'disabled' : ''}>✕</button>`;
+    if (state.mobile) {
+      return `
+        <div class="mobile-layer-row">
+          <label class="tiny-check"><input type="checkbox" ${layer.visible !== false ? 'checked' : ''} data-layer-visible="${layer.id}" ${!canEdit() ? 'disabled' : ''}></label>
+          <input type="text" value="${escapeHtml(layer.name)}" data-layer-name="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
+          <input type="color" value="${layer.color || '#0f766e'}" data-layer-color="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
+          <input type="range" min="0.1" max="1" step="0.05" value="${Math.max(.1, Math.min(1, Number(layer.opacity ?? 0.88)))}" data-layer-opacity="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
+          <input type="range" min="4" max="18" step="1" value="${Math.max(4, Math.min(18, Math.round(layer.size || 9)))}" data-layer-size="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
+          ${delBtn}
+        </div>`;
+    }
+    return `
+      <div class="cad-layer-row">
+        <label class="tiny-check"><input type="checkbox" ${layer.visible !== false ? 'checked' : ''} data-layer-visible="${layer.id}" ${!canEdit() ? 'disabled' : ''}></label>
+        <input class="small-input cad-name" value="${escapeHtml(layer.name)}" data-layer-name="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
+        <input type="color" value="${layer.color || '#0f766e'}" data-layer-color="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
+        <input class="small-input cad-num" type="number" min="1" max="10" step="1" value="${Math.max(1, Math.min(10, Math.round(layer.size || 9)))}" data-layer-size="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
+        <input class="small-input cad-num" type="number" min="1" max="10" step="1" value="${Math.max(1, Math.min(10, Math.round((layer.opacity ?? 0.88) * 10)))}" data-layer-opacity="${layer.id}" ${!canEdit() ? 'disabled' : ''}>
+        <label class="tiny-check cad-legend"><input type="checkbox" ${layer.showInLegend ? 'checked' : ''} data-layer-legend="${layer.id}" ${!canEdit() ? 'disabled' : ''}> Legende</label>
+        ${delBtn}
+      </div>`;
+  }).join('');
 
-  wrap.querySelectorAll('[data-layer-name]').forEach(el => el.onchange = () => { getLayerById(el.dataset.layerName).name = el.value; debounceSave(); renderLegend(); });
+  wrap.innerHTML = state.mobile
+    ? `<div class="layer-headline"><div>Sicht</div><div>Layername</div><div>Farbe</div><div>Transp.</div><div>Größe</div><div></div></div>${rows}`
+    : rows;
+
+  wrap.querySelectorAll('[data-layer-name]').forEach(el => {
+    el.onchange = () => { getLayerById(el.dataset.layerName).name = el.value; debounceSave(); renderLegend(); };
+    el.oninput = () => { getLayerById(el.dataset.layerName).name = el.value; };
+  });
   wrap.querySelectorAll('[data-layer-visible]').forEach(el => el.onchange = () => { getLayerById(el.dataset.layerVisible).visible = el.checked; debounceSave(); renderAll(); });
   wrap.querySelectorAll('[data-layer-color]').forEach(el => el.oninput = () => { getLayerById(el.dataset.layerColor).color = el.value; renderAll(); debounceSave(); });
   wrap.querySelectorAll('[data-layer-size]').forEach(el => el.oninput = () => { getLayerById(el.dataset.layerSize).size = Number(el.value); renderAll(); debounceSave(); });
-  wrap.querySelectorAll('[data-layer-opacity]').forEach(el => el.oninput = () => { getLayerById(el.dataset.layerOpacity).opacity = Math.max(.1, Math.min(1, Number(el.value) / 10)); renderAll(); debounceSave(); });
+  wrap.querySelectorAll('[data-layer-opacity]').forEach(el => el.oninput = () => { getLayerById(el.dataset.layerOpacity).opacity = state.mobile ? Number(el.value) : Math.max(.1, Math.min(1, Number(el.value) / 10)); renderAll(); debounceSave(); });
   wrap.querySelectorAll('[data-layer-legend]').forEach(el => el.onchange = () => { getLayerById(el.dataset.layerLegend).showInLegend = el.checked; renderLegend(); debounceSave(); });
   wrap.querySelectorAll('[data-layer-del]').forEach(el => el.onclick = () => {
     if ((state.data.layers || []).length <= 1) return alert('Mindestens ein Layer muss bleiben.');
@@ -675,6 +747,7 @@ function renderLayers() {
     state.data.spots.forEach(s => {
       if (s.layerId === id) s.layerId = fallback;
       s.secondaryLayerIds = (s.secondaryLayerIds || []).filter(x => x !== id);
+      s.updatedAt = new Date().toISOString();
     });
     state.data.layers = state.data.layers.filter(l => l.id !== id);
     debounceSave();
@@ -749,17 +822,18 @@ function renderDays() {
 function renderAreas() {
   const wrap = document.getElementById('areaList');
   if (!wrap) return;
-  wrap.innerHTML = (state.data.areas || []).map(area => `
+  const rows = (state.data.areas || []).map(area => `
     <div class="area-row">
-      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+      <div class="area-grid">
         <div><strong>${escapeHtml(area.name)}</strong></div>
+        <label class="tiny-check"><input type="checkbox" ${state.areaVisibility[area.id] !== false ? 'checked' : ''} data-area-visible="${area.id}"> Sichtbar</label>
+        <label class="tiny-check"><input type="checkbox" ${state.areaFilter[area.id] ? 'checked' : ''} data-area-filter="${area.id}"> Filter</label>
         <button class="tiny-btn" data-area-edit="${area.id}" ${!canEdit() ? 'disabled' : ''}>Bearbeiten</button>
       </div>
-      <div class="area-actions">
-        <label class="tiny-check"><input type="checkbox" ${state.areaVisibility[area.id] !== false ? 'checked' : ''} data-area-visible="${area.id}"> sichtbar</label>
-        <label class="tiny-check"><input type="checkbox" ${state.areaFilter[area.id] ? 'checked' : ''} data-area-filter="${area.id}"> Filter</label>
-      </div>
     </div>`).join('');
+  wrap.innerHTML = state.mobile
+    ? `<div class="area-headline"><div>Bereich</div><div>Sichtbar</div><div>Filter</div><div>Aktion</div></div>${rows}`
+    : rows;
   wrap.querySelectorAll('[data-area-visible]').forEach(el => el.onchange = () => { state.areaVisibility[el.dataset.areaVisible] = el.checked; renderAll(); debounceSave(); });
   wrap.querySelectorAll('[data-area-filter]').forEach(el => el.onchange = () => { state.areaFilter[el.dataset.areaFilter] = el.checked; const area = state.data.areas.find(a => a.id === el.dataset.areaFilter); if (area) area.useForFilter = el.checked; renderAll(); debounceSave(); });
   wrap.querySelectorAll('[data-area-edit]').forEach(el => el.onclick = () => openAreaEditor(el.dataset.areaEdit));
@@ -909,6 +983,7 @@ function saveSpotModal() {
   syncKnownDays();
   spot.lat = Number(document.getElementById('spotLat').value);
   spot.lon = Number(document.getElementById('spotLon').value);
+  spot.updatedAt = new Date().toISOString();
   closeModal();
   renderAll();
   debounceSave();
@@ -945,15 +1020,55 @@ function addNewLayer() {
   state.data.layers.push({ id, name: 'Neuer Layer', color: '#2563eb', size: 9, opacity: 0.85, visible: true, sortOrder: state.data.layers.length });
   renderAll();
   debounceSave();
+  setTimeout(() => {
+    const input = document.querySelector(`[data-layer-name="${id}"]`);
+    if (input) { input.focus(); input.select?.(); }
+  }, 40);
 }
 
+function updateAddPinUi() {
+  document.body.classList.toggle('add-pin-mode', !!state.addPinMode);
+  const btn = document.querySelector('[data-action="add-pin"]');
+  if (btn) btn.disabled = !!state.addPinMode;
+  const box = document.getElementById('addPinConfirm');
+  const coords = document.getElementById('addPinCoords');
+  if (coords) coords.textContent = state.pendingAddPinLatLng ? `Lat ${state.pendingAddPinLatLng.lat.toFixed(6)} · Lon ${state.pendingAddPinLatLng.lng.toFixed(6)}` : 'Noch keine Position gewählt.';
+  if (box) box.classList.toggle('open', !!state.addPinMode);
+}
+function cancelAddPin() {
+  state.addPinMode = false;
+  state.pendingAddPinLatLng = null;
+  if (state.tempAddPinMarker) {
+    try { state.map.removeLayer(state.tempAddPinMarker); } catch {}
+    state.tempAddPinMarker = null;
+  }
+  updateAddPinUi();
+  setStatus('');
+}
 function beginAddPin() {
   if (!canEdit()) return alert('Zum Hinzufügen bitte einloggen.');
+  if (state.addPinMode) return;
   state.addPinMode = true;
-  document.body.classList.add('add-pin-mode');
-  setStatus('Klick auf die Karte, um einen Spot zu setzen');
+  state.pendingAddPinLatLng = null;
+  updateAddPinUi();
+  setStatus('Klick auf die Karte, um einen Spot zu markieren');
 }
 function addSpotAt(latlng) {
+  state.pendingAddPinLatLng = latlng;
+  if (!state.tempAddPinMarker) {
+    state.tempAddPinMarker = L.marker(latlng, { draggable: true }).addTo(state.map);
+    state.tempAddPinMarker.on('dragend', () => {
+      state.pendingAddPinLatLng = state.tempAddPinMarker.getLatLng();
+      updateAddPinUi();
+    });
+  } else {
+    state.tempAddPinMarker.setLatLng(latlng);
+  }
+  updateAddPinUi();
+}
+function confirmAddPin() {
+  if (!state.pendingAddPinLatLng) return alert('Bitte erst eine Position auf der Karte wählen.');
+  const latlng = state.pendingAddPinLatLng;
   const nextId = Math.max(0, ...state.data.spots.map(s => Number(s.id) || 0)) + 1;
   state.data.spots.push({
     id: nextId,
@@ -970,13 +1085,15 @@ function addSpotAt(latlng) {
     googleMaps: '',
     layerId: state.data.layers[0]?.id || 'default',
     secondaryLayerIds: [],
+    updatedAt: new Date().toISOString(),
   });
-  state.addPinMode = false;
-  document.body.classList.remove('add-pin-mode');
+  cancelAddPin();
   renderAll();
   debounceSave();
   setTimeout(() => openSpotModal(nextId), 120);
 }
+window.cancelAddPin = cancelAddPin;
+window.confirmAddPin = confirmAddPin;
 
 function openAreaEditor(id) {
   const area = (state.data.areas || []).find(a => a.id === id);
@@ -1185,6 +1302,20 @@ function setupUiEvents() {
     await importJsonFile(file);
     ev.target.value = '';
   });
+  document.getElementById('confirmAddPinBtn')?.addEventListener('click', confirmAddPin);
+  document.getElementById('cancelAddPinBtn')?.addEventListener('click', cancelAddPin);
+  document.getElementById('menuOpacityRange')?.addEventListener('input', ev => { state.uiOpacity.menu = Number(ev.target.value); applyUiOpacity(); saveUiSettings(); });
+  document.getElementById('panelOpacityRange')?.addEventListener('input', ev => { state.uiOpacity.panel = Number(ev.target.value); applyUiOpacity(); saveUiSettings(); });
+  document.getElementById('dbSortField')?.addEventListener('change', ev => { state.dbSort.field = ev.target.value; saveUiSettings(); renderDatabase(); });
+  document.getElementById('dbSortDir')?.addEventListener('change', ev => { state.dbSort.dir = ev.target.value; saveUiSettings(); renderDatabase(); });
+  const menuRange = document.getElementById('menuOpacityRange');
+  const panelRange = document.getElementById('panelOpacityRange');
+  if (menuRange) menuRange.value = String(state.uiOpacity.menu);
+  if (panelRange) panelRange.value = String(state.uiOpacity.panel);
+  const dbField = document.getElementById('dbSortField');
+  const dbDir = document.getElementById('dbSortDir');
+  if (dbField) dbField.value = state.dbSort.field;
+  if (dbDir) dbDir.value = state.dbSort.dir;
 }
 
 async function refreshRemoteDataSilently() {
@@ -1283,7 +1414,9 @@ async function initApp({ mobile = false } = {}) {
   await loadData();
   setupUiEvents();
   initMap(mobile);
+  applyUiOpacity();
   renderAll();
+  updateAddPinUi();
   setupRealtimeSync();
   switchView('map');
   if (!mobile) {

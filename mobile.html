@@ -31,14 +31,14 @@ html,body{height:100%;margin:0;font-family:Inter,Arial,sans-serif;overflow:hidde
 .dock button.active{background:linear-gradient(135deg,var(--teal),var(--blue));color:#fff}
 .dock .icon{font-size:17px;line-height:1}
 .badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 6px;border-radius:999px;background:#0f172a;color:#fff;font-size:10px;font-weight:800}
-.panel{position:fixed;left:10px;right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 78px);z-index:41;border-radius:22px 22px 18px 18px;display:none;overflow:hidden;max-height:calc(100vh - 170px)}
+.panel{position:fixed;left:10px;right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 78px);z-index:41;border-radius:22px 22px 18px 18px;display:none;overflow:hidden;max-height:min(calc(100vh - 170px), calc((100vh - 170px) * .5))}
 .panel.open{display:flex;flex-direction:column}
 .panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px 10px;border-bottom:1px solid var(--line)}
 .panel-title{font-size:14px;font-weight:900;letter-spacing:.01em}
 .panel-sub{font-size:11px;color:var(--muted)}
 .panel-body{padding:12px;overflow:auto;display:grid;gap:10px}
 .panel-close,.tiny-btn,.btn{border:1px solid var(--line);background:rgba(255,255,255,.72);border-radius:12px;color:var(--text)}
-.panel-close{width:34px;height:34px;font-size:18px}
+.panel-close{width:34px;height:34px;font-size:18px;color:#b91c1c;font-weight:900}
 .section{background:rgba(255,255,255,.52);border:1px solid rgba(15,23,42,.08);border-radius:16px;padding:10px}
 .section summary{list-style:none;cursor:pointer;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:space-between}
 .section summary::-webkit-details-marker{display:none}
@@ -61,10 +61,21 @@ label{display:block;font-size:12px;color:#334155}
 .stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.stat{padding:12px;border-radius:14px;background:rgba(15,23,42,.88);color:#fff}.stat b{display:block;font-size:22px}
 #resultsList{display:grid;gap:8px}
 .result-card{display:grid;grid-template-columns:72px 1fr;gap:10px;padding:8px;border-radius:14px;background:rgba(255,255,255,.58);border:1px solid rgba(15,23,42,.08)}
-.result-thumb{width:72px;height:58px;border-radius:10px;overflow:hidden;background:#e2e8f0}.result-thumb img,.db-thumb,.modal-photo img,.near-thumb img{width:100%;height:100%;object-fit:cover}
+.result-thumb{width:72px;height:58px;border-radius:10px;overflow:hidden;background:#e2e8f0}.result-thumb img,.db-thumb img,.modal-photo img,.near-thumb img{display:block;width:100%;height:100%;max-width:100%;object-fit:cover}
 .result-name{font-size:13px;font-weight:800}.result-meta{font-size:11px;color:var(--muted);margin-top:4px}
 .layer-row,.area-row{padding:8px 0;border-top:1px solid rgba(15,23,42,.08)}.layer-row:first-child,.area-row:first-child{border-top:0}
 .layer-head{display:grid;grid-template-columns:1fr auto auto;gap:6px;align-items:center}.layer-grid{display:grid;gap:6px;margin-top:6px}.tiny-check{font-size:11px;display:flex;align-items:center;gap:4px}.area-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.layer-headline,.area-headline{display:grid;gap:8px;padding:2px 0 8px;color:var(--muted);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.layer-headline{grid-template-columns:34px minmax(0,1fr) 52px 74px 70px 32px}
+.mobile-layer-row{display:grid;grid-template-columns:34px minmax(0,1fr) 52px 74px 70px 32px;gap:8px;align-items:center;padding:10px 0;border-top:1px solid rgba(15,23,42,.08)}
+.mobile-layer-row:first-of-type{border-top:0}
+.mobile-layer-row input[type="text"]{padding:9px 10px}
+.mobile-layer-row .tiny-check{justify-content:center}
+.mobile-layer-row .tiny-btn{padding:8px 0}
+.area-grid{display:grid;grid-template-columns:minmax(0,1.3fr) .8fr .8fr auto;gap:8px;align-items:center}
+.area-headline{grid-template-columns:minmax(0,1.3fr) .8fr .8fr auto}
+.sort-row{display:grid;grid-template-columns:1fr 120px;gap:8px}
+#dbWrap .sort-row{position:sticky;top:0;z-index:2;padding-bottom:10px;margin-bottom:10px;background:linear-gradient(180deg,var(--bg-2),rgba(255,255,255,.35))}
 #dbWrap{position:fixed;inset:calc(env(safe-area-inset-top,0px) + 62px) 10px calc(env(safe-area-inset-bottom,0px) + 82px) 10px;z-index:39;display:none;border-radius:20px;padding:10px;overflow:auto}
 body[data-view="db"] #dbWrap{display:block}
 body[data-view="db"] .panel,body[data-view="db"] .fab-main{display:none !important}
@@ -79,7 +90,7 @@ body[data-view="db"] .panel,body[data-view="db"] .fab-main{display:none !importa
 .leaflet-top.leaflet-left{top:calc(env(safe-area-inset-top,0px) + 68px);left:8px}
 .leaflet-control-zoom a{width:34px;height:34px;line-height:34px}
 .spot-icon-host{background:transparent;border:0}.spot-wrap{display:flex;flex-direction:column;align-items:center;transform:translateY(-8px)}.spot-dot{border:1.5px solid;border-radius:999px}.spot-label{background:rgba(255,255,255,.9);padding:1px 5px;border-radius:8px;line-height:1.2;white-space:nowrap;margin-bottom:2px;box-shadow:0 4px 10px rgba(15,23,42,.12)}
-#modal{position:fixed;inset:0;background:rgba(2,6,23,.38);display:none;align-items:flex-end;z-index:60}#modal.open{display:flex}.modal-card{width:100%;border-radius:26px 26px 0 0;padding:14px;max-height:88vh;overflow:auto}.modal-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.modal-head h3{margin:0;font-size:18px}.modal-grid{display:grid;gap:12px}.modal-photo{height:220px;border-radius:14px;overflow:hidden;background:#e2e8f0}.coord-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.near-wrap{margin-top:10px}.near-card{display:grid;grid-template-columns:70px 1fr;gap:8px;padding:8px 0}.near-thumb{width:70px;height:52px;border-radius:10px;overflow:hidden;background:#e2e8f0}.modal-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.img-missing{height:100%;display:grid;place-items:center;color:#64748b}
+#modal{position:fixed;inset:0;background:rgba(2,6,23,.38);display:none;align-items:flex-end;z-index:60}#modal.open{display:flex}.modal-card{width:100%;border-radius:26px 26px 0 0;padding:14px;max-height:56vh;overflow:auto}.modal-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.modal-head h3{margin:0;font-size:18px}.modal-grid{display:grid;gap:12px}.modal-photo{height:min(220px,28vh);border-radius:14px;overflow:hidden;background:#e2e8f0}.coord-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}.near-wrap{margin-top:10px}.near-card{display:grid;grid-template-columns:70px 1fr;gap:8px;padding:8px 0}.near-thumb{width:70px;height:52px;border-radius:10px;overflow:hidden;background:#e2e8f0}.modal-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.img-missing{height:100%;display:grid;place-items:center;color:#64748b}
 body.add-pin-mode #map{cursor:crosshair}
 .locate-btn{
   position:fixed;
@@ -101,6 +112,11 @@ body.add-pin-mode #map{cursor:crosshair}
   transform:scale(.98);
 }
 .hidden-mobile{display:none}
+
+.add-pin-confirm{position:fixed;left:10px;right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 78px);z-index:45;display:none;border-radius:22px;padding:12px;max-height:min(calc(100vh - 170px), calc((100vh - 170px) * .5));overflow:auto}
+.add-pin-confirm.open{display:grid;gap:10px}
+.add-pin-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.fab-main[disabled]{opacity:.45;filter:grayscale(1);pointer-events:none}
 </style>
 </head>
 <body data-view="map">
@@ -131,7 +147,7 @@ body.add-pin-mode #map{cursor:crosshair}
       <div class="panel-title">Suche & Treffer</div>
       <div class="panel-sub">Alles einklappbar, Karte bleibt maximal groß.</div>
     </div>
-    <button class="panel-close" data-panel-close>–</button>
+    <button class="panel-close" data-panel-close>✕</button>
   </div>
   <div class="panel-body">
     <div class="section-body stack">
@@ -161,7 +177,7 @@ body.add-pin-mode #map{cursor:crosshair}
     </div>
     <div style="display:flex;gap:8px">
       <button class="tiny-btn" data-action="new-layer">＋</button>
-      <button class="panel-close" data-panel-close>–</button>
+      <button class="panel-close" data-panel-close>✕</button>
     </div>
   </div>
   <div class="panel-body">
@@ -178,7 +194,7 @@ body.add-pin-mode #map{cursor:crosshair}
       <div class="panel-title">Bereiche</div>
       <div class="panel-sub">Ein-/ausblenden, als Filter nutzen, direkt bearbeiten.</div>
     </div>
-    <button class="panel-close" data-panel-close>–</button>
+    <button class="panel-close" data-panel-close>✕</button>
   </div>
   <div class="panel-body">
     <details class="section" open>
@@ -197,7 +213,7 @@ body.add-pin-mode #map{cursor:crosshair}
     </div>
     <div style="display:flex;gap:8px">
       <button class="tiny-btn" data-action="new-day">＋</button>
-      <button class="panel-close" data-panel-close>–</button>
+      <button class="panel-close" data-panel-close>✕</button>
     </div>
   </div>
   <div class="panel-body">
@@ -214,7 +230,7 @@ body.add-pin-mode #map{cursor:crosshair}
       <div class="panel-title">Login</div>
       <div class="panel-sub">Öffentlich lesen, eingeloggt bearbeiten.</div>
     </div>
-    <button class="panel-close" data-panel-close>–</button>
+    <button class="panel-close" data-panel-close>✕</button>
   </div>
   <div class="panel-body">
     <div class="section-body authline">
@@ -241,7 +257,7 @@ body.add-pin-mode #map{cursor:crosshair}
       <div class="panel-title">Tools</div>
       <div class="panel-sub">Import, Export und Datenbank-Ansicht.</div>
     </div>
-    <button class="panel-close" data-panel-close>–</button>
+    <button class="panel-close" data-panel-close>✕</button>
   </div>
   <div class="panel-body">
     <details class="section" open>
@@ -250,6 +266,13 @@ body.add-pin-mode #map{cursor:crosshair}
         <button class="btn" data-action="export-json">JSON exportieren</button>
         <label>JSON importieren<input type="file" accept="application/json" data-action="import-json"></label>
         <div class="small-note">Supabase speichert live. Ohne Backend landet alles nur lokal im Browser.</div>
+      </div>
+    </details>
+    <details class="section" open>
+      <summary>Darstellung</summary>
+      <div class="section-body stack">
+        <label>Menüleiste Transparenz<input id="menuOpacityRange" type="range" min="0.2" max="1" step="0.02"></label>
+        <label>Panels & Popups Transparenz<input id="panelOpacityRange" type="range" min="0.2" max="1" step="0.02"></label>
       </div>
     </details>
     <details class="section">
@@ -264,8 +287,31 @@ body.add-pin-mode #map{cursor:crosshair}
 </section>
 
 <section id="dbWrap" class="glass">
+  <div class="sort-row">
+    <select id="dbSortField">
+      <option value="name">Name</option>
+      <option value="updatedAt">Letzte Änderung</option>
+      <option value="layerCount">Layer-Anzahl</option>
+    </select>
+    <select id="dbSortDir">
+      <option value="asc">Aufsteigend</option>
+      <option value="desc">Absteigend</option>
+    </select>
+  </div>
   <div class="db-list" id="dbBody"></div>
 </section>
+
+<div class="glass add-pin-confirm" id="addPinConfirm">
+  <div>
+    <div class="panel-title">Neuen Spot platzieren</div>
+    <div class="panel-sub">Pin setzen, bei Bedarf verschieben und dann bestätigen.</div>
+  </div>
+  <div class="small-note" id="addPinCoords">Noch keine Position gewählt.</div>
+  <div class="add-pin-actions">
+    <button class="btn" id="cancelAddPinBtn" type="button">Abbrechen</button>
+    <button class="btn primary" id="confirmAddPinBtn" type="button">Bestätigen</button>
+  </div>
+</div>
 
 <div id="modal"><div class="glass modal-card" id="modalInner"></div></div>
 
