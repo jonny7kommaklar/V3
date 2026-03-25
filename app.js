@@ -629,7 +629,7 @@ function getSpotLayerCount(spot) {
   return allSpotLayerIds(spot).length;
 }
 function sortedMatchedSpots() {
-  const matched = sortedMatchedSpots();
+  const matched = (state.data?.spots || []).filter(matchesFilters);
   const dir = state.dbSort.dir === 'desc' ? -1 : 1;
   const field = state.dbSort.field || 'name';
   return [...matched].sort((a, b) => {
@@ -653,7 +653,7 @@ function sortedMatchedSpots() {
 function renderDatabase() {
   const body = document.getElementById('dbBody');
   if (!body) return;
-  const matched = (state.data.spots || []).filter(matchesFilters);
+	const matched = sortedMatchedSpots();
   if (state.mobile) {
     body.innerHTML = matched.map(spot => `
       <div class="db-row" data-spot-row="${spot.id}">
