@@ -932,6 +932,7 @@ function openSpotModal(id) {
   state.activeSpotId = spot.id;
   state.editorOpen = true;
   state.editorDirty = false;
+
   const near = nearestSpots(spot, 2).map(({ spot: s, d }) => `
     <div class="near-card" data-near="${s.id}">
       <div class="near-thumb">${buildProgressiveImage(imageCandidates(s), '', '')}</div>
@@ -941,50 +942,102 @@ function openSpotModal(id) {
   const editorDisabled = !canEdit() ? 'disabled' : '';
   const extraSelections = Array.from({ length: 8 }, (_, i) => spot.secondaryLayerIds?.[i] || '');
   const gmaps = ensureGoogleMapsUrl(spot);
-  document.getElementById('modalInner').innerHTML = `
-    <div class="modal-head">
-      <h3>${escapeHtml(spot.name || 'Spot')}</h3>
-      <button class="tiny-btn" onclick="closeModal()">✕</button>
-    </div>
-    <div class="modal-photo"><div class="modal-photo-stack">${buildProgressiveImage(imageCandidates(spot), '', `<div class="img-missing">Kein Bild</div>`)}<div class="modal-layer-dots">${layerBadgeDots(spot)}</div></div></div>
-    <div class="small-note" style="margin:10px 0">Spot-ID: <b>${spot.id}</b></div>
-    <div class="modal-grid">
-      <div>
-        <label>Name<input id="spotName" value="${escapeHtml(spot.name || '')}" ${editorDisabled}></label>
-        <label>Geplanter Tag<select id="spotDay" ${editorDisabled}><option value="">–</option>${(state.data.meta?.days || []).map(d => `<option value="${escapeHtml(d)}" ${(spot.plannedDay || '') === d ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('')}</select></label>
-        <label>Primärlayer<select id="spotLayer" ${editorDisabled}>${makeLayerOptions(spot.layerId)}</select></label>
-        <div class="layer-stack">${extraSelections.map((val, idx) => `<label>Layer ${idx + 2}<select id="spotLayer${idx + 2}" ${editorDisabled}>${makeNullableLayerOptions(val)}</select></label>`).join('')}</div>
-        <label>Kommentar<textarea id="spotComment" ${editorDisabled}>${escapeHtml(spot.comment || '')}</textarea></label>
-        <div class="coord-row">
-          <label>Lat<input id="spotLat" value="${spot.lat}" ${editorDisabled}></label>
-          <label>Lon<input id="spotLon" value="${spot.lon}" ${editorDisabled}></label>
+
+  if (state.mobile) {
+    const mobileLayers = [
+      `<label>Layer 1<select id="spotLayer" ${editorDisabled}>${makeLayerOptions(spot.layerId)}</select></label>`,
+      ...extraSelections.map((val, idx) => `<label>Layer ${idx + 2}<select id="spotLayer${idx + 2}" ${editorDisabled}>${makeNullableLayerOptions(val)}</select></label>`)
+    ].join('');
+
+    document.getElementById('modalInner').innerHTML = `
+      <div class="modal-head compact-modal-head">
+        <div class="modal-head-copy">
+          <div class="modal-spot-id">Spot-ID: <b>${spot.id}</b></div>
+          <h3>${escapeHtml(spot.name || 'Spot')}</h3>
         </div>
-        <div class="coord-row">
-          <label>Google Maps / URL<input id="spotGoogleMaps" value="${escapeHtml(spot.googleMaps || '')}" ${editorDisabled}></label>
-          <label>Ort / Notiz<input id="spotLocation" value="${escapeHtml(spot.location || '')}" ${editorDisabled}></label>
-        </div>
-        <div class="coord-row">
-          <label>Dateiname lokal<input id="spotImageFile" value="${escapeHtml(spot.imageFile || '')}" ${editorDisabled}></label>
-          <label style="display:flex;align-items:flex-end">${gmaps ? `<a class="btn" href="${escapeHtml(gmaps)}" target="_blank" rel="noopener">In Google Maps öffnen</a>` : ''}</label>
-        </div>
-        ${canEdit() ? `
-          <div class="coord-row">
-            <label>Bild wählen<input id="spotUpload" type="file" accept="image/*"></label>
-            <label style="display:flex;align-items:flex-end"><button type="button" class="btn" onclick="uploadSpotImage()">Bild hochladen</button></label>
-          </div>` : `<div class="small-note">Zum Bearbeiten bitte oben einloggen.</div>`}
+        <button class="modal-close-x" onclick="closeModal()" aria-label="Schließen">✕</button>
       </div>
-    </div>
-    <div class="near-wrap"><h4>Nächste Spots</h4>${near || '<div class="small-note">Keine</div>'}</div>
-    <div class="modal-actions">
-      ${canEdit() ? '<button class="btn" onclick="deleteSpot()">Löschen</button><button class="btn primary" onclick="saveSpotModal()">Speichern</button>' : ''}
-    </div>`;
+
+      <div class="modal-photo modal-photo-compact">
+        <div class="modal-photo-stack">
+          ${buildProgressiveImage(imageCandidates(spot), '', `<div class="img-missing">Kein Bild</div>`)}
+          <div class="modal-layer-dots">${layerBadgeDots(spot)}</div>
+        </div>
+      </div>
+
+      <div class="modal-grid modal-grid-compact">
+        <label class="modal-comment-block">Kommentar<textarea id="spotComment" ${editorDisabled}>${escapeHtml(spot.comment || '')}</textarea></label>
+
+        <div class="compact-fields-row">
+          <label>Name<input id="spotName" value="${escapeHtml(spot.name || '')}" ${editorDisabled}></label>
+          <label>Geplanter Tag<select id="spotDay" ${editorDisabled}><option value="">–</option>${(state.data.meta?.days || []).map(d => `<option value="${escapeHtml(d)}" ${(spot.plannedDay || '') === d ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('')}</select></label>
+        </div>
+
+        <div class="mobile-layer-grid compact-mobile-layer-grid">${mobileLayers}</div>
+
+        ${canEdit() ? `
+          <div class="compact-upload-row compact-upload-row-mobile">
+            <label class="file-compact">Datei auswählen<input id="spotUpload" type="file" accept="image/*"></label>
+            <button type="button" class="btn btn-compact-upload" onclick="uploadSpotImage()">Upload</button>
+            ${gmaps ? `<a class="btn btn-compact-upload" href="${escapeHtml(gmaps)}" target="_blank" rel="noopener">GMaps</a>` : '<span></span>'}
+          </div>` : `${gmaps ? `<div class="compact-link-row">${`<a class="btn btn-compact-upload" href="${escapeHtml(gmaps)}" target="_blank" rel="noopener">In Google Maps öffnen</a>`}</div>` : `<div class="small-note">Zum Bearbeiten bitte oben einloggen.</div>`}`}
+
+        <div class="near-wrap near-wrap-compact">
+          <h4>Nächste Spots</h4>
+          <div class="mobile-near-grid">${near || '<div class="small-note">Keine</div>'}</div>
+        </div>
+
+        <div class="modal-actions mobile-modal-actions">
+          ${canEdit() ? '<button class="btn danger-compact" onclick="deleteSpot()">Löschen</button><button class="btn primary" onclick="saveSpotModal()">Speichern</button>' : ''}
+        </div>
+      </div>`;
+  } else {
+    document.getElementById('modalInner').innerHTML = `
+      <div class="modal-head">
+        <h3>${escapeHtml(spot.name || 'Spot')}</h3>
+        <button class="tiny-btn" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-photo"><div class="modal-photo-stack">${buildProgressiveImage(imageCandidates(spot), '', `<div class="img-missing">Kein Bild</div>`)}<div class="modal-layer-dots">${layerBadgeDots(spot)}</div></div></div>
+      <div class="small-note" style="margin:10px 0">Spot-ID: <b>${spot.id}</b></div>
+      <div class="modal-grid">
+        <div>
+          <label>Name<input id="spotName" value="${escapeHtml(spot.name || '')}" ${editorDisabled}></label>
+          <label>Geplanter Tag<select id="spotDay" ${editorDisabled}><option value="">–</option>${(state.data.meta?.days || []).map(d => `<option value="${escapeHtml(d)}" ${(spot.plannedDay || '') === d ? 'selected' : ''}>${escapeHtml(d)}</option>`).join('')}</select></label>
+          <label>Primärlayer<select id="spotLayer" ${editorDisabled}>${makeLayerOptions(spot.layerId)}</select></label>
+          <div class="layer-stack">${extraSelections.map((val, idx) => `<label>Layer ${idx + 2}<select id="spotLayer${idx + 2}" ${editorDisabled}>${makeNullableLayerOptions(val)}</select></label>`).join('')}</div>
+          <label>Kommentar<textarea id="spotComment" ${editorDisabled}>${escapeHtml(spot.comment || '')}</textarea></label>
+          <div class="coord-row">
+            <label>Lat<input id="spotLat" value="${spot.lat}" ${editorDisabled}></label>
+            <label>Lon<input id="spotLon" value="${spot.lon}" ${editorDisabled}></label>
+          </div>
+          <div class="coord-row">
+            <label>Google Maps / URL<input id="spotGoogleMaps" value="${escapeHtml(spot.googleMaps || '')}" ${editorDisabled}></label>
+            <label>Ort / Notiz<input id="spotLocation" value="${escapeHtml(spot.location || '')}" ${editorDisabled}></label>
+          </div>
+          <div class="coord-row">
+            <label>Dateiname lokal<input id="spotImageFile" value="${escapeHtml(spot.imageFile || '')}" ${editorDisabled}></label>
+            <label style="display:flex;align-items:flex-end">${gmaps ? `<a class="btn" href="${escapeHtml(gmaps)}" target="_blank" rel="noopener">In Google Maps öffnen</a>` : ''}</label>
+          </div>
+          ${canEdit() ? `
+            <div class="coord-row">
+              <label>Bild wählen<input id="spotUpload" type="file" accept="image/*"></label>
+              <label style="display:flex;align-items:flex-end"><button type="button" class="btn" onclick="uploadSpotImage()">Bild hochladen</button></label>
+            </div>` : `<div class="small-note">Zum Bearbeiten bitte oben einloggen.</div>`}
+        </div>
+      </div>
+      <div class="near-wrap"><h4>Nächste Spots</h4>${near || '<div class="small-note">Keine</div>'}</div>
+      <div class="modal-actions">
+        ${canEdit() ? '<button class="btn" onclick="deleteSpot()">Löschen</button><button class="btn primary" onclick="saveSpotModal()">Speichern</button>' : ''}
+      </div>`;
+  }
+
   document.getElementById('modal').classList.add('open');
   document.querySelectorAll('[data-near]').forEach(el => el.onclick = () => openSpotModal(Number(el.dataset.near)));
   document.querySelectorAll('#modal input, #modal textarea, #modal select').forEach(el => {
-  el.addEventListener('input', () => { state.editorDirty = true; });
-  el.addEventListener('change', () => { state.editorDirty = true; });
-});
-} 
+    el.addEventListener('input', () => { state.editorDirty = true; });
+    el.addEventListener('change', () => { state.editorDirty = true; });
+  });
+}
 window.openSpotModal = openSpotModal;
 function closeModal() {
   state.editorOpen = false;
