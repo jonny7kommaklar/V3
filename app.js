@@ -31,7 +31,12 @@ const state = {
   tempAddPinMarker: null,
   pendingAddPinLatLng: null,
   uiOpacity: { menu: 0.74, panel: 0.92 },
+  uiTheme: { panelColor: '#ffffff' },
   dbSort: { field: 'name', dir: 'asc' },
+  locationFilter: { enabled: false, radiusKm: 1, center: null },
+  locationCircle: null,
+  locationMarker: null,
+  locationLayer: null,
 };
 
 const LOCAL_STORAGE_KEY = 'pragmap-local-data-v1';
@@ -49,8 +54,18 @@ function loadUiSettings() {
       visible: raw.routeSettings?.visible || {},
     };
     state.uiOpacity = {
-      menu: Math.max(0.2, Math.min(1, Number(raw.uiOpacity?.menu ?? 0.74))),
-      panel: Math.max(0.2, Math.min(1, Number(raw.uiOpacity?.panel ?? 0.92))),
+      menu: Math.max(0.08, Math.min(1, Number(raw.uiOpacity?.menu ?? 0.74))),
+      panel: Math.max(0.08, Math.min(1, Number(raw.uiOpacity?.panel ?? 0.92))),
+    };
+    state.uiTheme = {
+      panelColor: /^#[0-9a-fA-F]{6}$/.test(raw.uiTheme?.panelColor || '') ? raw.uiTheme.panelColor : '#ffffff',
+    };
+    state.locationFilter = {
+      enabled: !!raw.locationFilter?.enabled,
+      radiusKm: Math.max(0.1, Math.min(4, Number(raw.locationFilter?.radiusKm ?? 1))),
+      center: raw.locationFilter?.center && Number.isFinite(Number(raw.locationFilter.center.lat)) && Number.isFinite(Number(raw.locationFilter.center.lon))
+        ? { lat: Number(raw.locationFilter.center.lat), lon: Number(raw.locationFilter.center.lon) }
+        : null,
     };
     state.dbSort = {
       field: raw.dbSort?.field || 'name',
@@ -64,19 +79,24 @@ function saveUiSettings() {
     legendOpen: state.legendOpen,
     routeSettings: state.routeSettings,
     uiOpacity: state.uiOpacity,
+    uiTheme: state.uiTheme,
     dbSort: state.dbSort,
+    locationFilter: state.locationFilter,
   }));
 }
 function applyUiOpacity() {
-  document.documentElement.style.setProperty('--bg', `rgba(255,255,255,${state.uiOpacity.menu})`);
-  document.documentElement.style.setProperty('--bg-2', `rgba(255,255,255,${state.uiOpacity.panel})`);
-  document.querySelectorAll('.dock button, .locate-btn').forEach(el => {
-    el.style.background = `rgba(255,255,255,${Math.max(0.2, Math.min(1, state.uiOpacity.menu + 0.04))})`;
+  const menuBg = rgbaFromTheme(state.uiOpacity.menu);
+  const panelBg = rgbaFromTheme(state.uiOpacity.panel);
+  document.documentElement.style.setProperty('--bg', menuBg);
+  document.documentElement.style.setProperty('--bg-2', panelBg);
+  document.querySelectorAll('.dock button, .locate-btn, .radius-btn').forEach(el => {
+    el.style.background = rgbaFromTheme(Math.max(0.08, Math.min(1, state.uiOpacity.menu + 0.04)));
   });
-  document.querySelectorAll('.panel,.switcher,#dbWrap,.add-pin-confirm,.modal-card').forEach(el => {
-    el.style.background = `rgba(255,255,255,${state.uiOpacity.panel})`;
+  document.querySelectorAll('.panel,.switcher,#dbWrap,.add-pin-confirm,.modal-card,.radius-card').forEach(el => {
+    el.style.background = panelBg;
   });
 }
+
 function getDayRouteOrder(day) {
   const key = `routeOrder:${day}`;
   try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch { return []; }
@@ -120,6 +140,24 @@ function renderLegend() {
 
 function escapeHtml(s) {
   return (s ?? '').toString().replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+}
+function hexToRgb(hex) {
+  const clean = (hex || '').toString().trim().replace('#', '');
+  if (!/^[0-9a-fA-F]{6}$/.test(clean)) return { r: 255, g: 255, b: 255 };
+  return { r: parseInt(clean.slice(0, 2), 16), g: parseInt(clean.slice(2, 4), 16), b: parseInt(clean.slice(4, 6), 16) };
+}
+function rgbaFromTheme(alpha) {
+  const { r, g, b } = hexToRgb(state.uiTheme?.panelColor || '#ffffff');
+  return `rgba(${r},${g},${b},${Math.max(0.08, Math.min(1, alpha))})`;
+}
+function getInputValue(id, fallback = '') {
+  const el = document.getElementById(id);
+  return el ? el.value : fallback;
+}
+function getInputNumber(id, fallback = 0) {
+  const el = document.getElementById(id);
+  const val = el ? Number(el.value) : Number(fallback);
+  return Number.isFinite(val) ? val : Number(fallback);
 }
 function slugify(str) {
   return (str || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase();
@@ -481,6 +519,10 @@ function matchesFilters(spot) {
   if (state.filters.layer !== 'all' && !allSpotLayerIds(spot).includes(state.filters.layer)) return false;
   if (state.filters.plannedDay !== 'all' && (spot.plannedDay || '').trim() !== state.filters.plannedDay) return false;
   if (state.filters.hasImage && !spotHasImage(spot)) return false;
+  if (state.locationFilter.enabled && state.locationFilter.center) {
+    const d = distanceMeters({ lat: state.locationFilter.center.lat, lon: state.locationFilter.center.lon }, spot);
+    if (d > state.locationFilter.radiusKm * 1000) return false;
+  }
   const activeAreaIds = Object.entries(state.areaFilter).filter(([, v]) => v).map(([k]) => k);
   if (activeAreaIds.length) {
     const hit = activeAreaIds.some(id => pointInArea(spot, (state.data.areas || []).find(a => a.id === id)));
@@ -554,6 +596,7 @@ function renderMap() {
   state.markerLayer.clearLayers();
   state.drawItems.clearLayers();
   if (state.routeLayer) state.routeLayer.clearLayers();
+  if (state.locationLayer) state.locationLayer.clearLayers();
 
   for (const area of state.data.areas || []) {
     if (state.areaVisibility[area.id] === false || !area.geojson) continue;
@@ -587,6 +630,14 @@ function renderMap() {
     marker.on('click', () => {
       openSpotPopup(spot.id, marker);
     });
+  }
+
+  if (state.locationLayer && state.locationFilter.center) {
+    const center = [state.locationFilter.center.lat, state.locationFilter.center.lon];
+    L.circleMarker(center, { radius: 6, color: '#0f766e', weight: 2, fillColor: '#ffffff', fillOpacity: 0.95 }).addTo(state.locationLayer);
+    if (state.locationFilter.enabled) {
+      L.circle(center, { radius: state.locationFilter.radiusKm * 1000, color: '#16a34a', weight: 2, fillColor: '#22c55e', fillOpacity: 0.08 }).addTo(state.locationLayer);
+    }
   }
 
   for (const day of routeDaysToRender()) {
@@ -640,6 +691,9 @@ function sortedMatchedSpots() {
     } else if (field === 'layerCount') {
       va = getSpotLayerCount(a);
       vb = getSpotLayerCount(b);
+    } else if (field === 'id') {
+      va = Number(a.id) || 0;
+      vb = Number(b.id) || 0;
     } else {
       va = (a.name || '').toString().toLocaleLowerCase('de');
       vb = (b.name || '').toString().toLocaleLowerCase('de');
@@ -971,18 +1025,18 @@ window.uploadSpotImage = uploadSpotImage;
 function saveSpotModal() {
   const spot = state.data.spots.find(s => s.id === state.activeSpotId);
   if (!spot || !canEdit()) return;
-  spot.name = document.getElementById('spotName').value.trim();
-  spot.plannedDay = document.getElementById('spotDay').value.trim();
-  spot.comment = document.getElementById('spotComment').value.trim();
-  spot.layerId = document.getElementById('spotLayer').value;
-  spot.location = document.getElementById('spotLocation').value.trim();
-  spot.googleMaps = document.getElementById('spotGoogleMaps').value.trim();
-  spot.imageFile = document.getElementById('spotImageFile').value.trim();
+  spot.name = getInputValue('spotName', spot.name).trim();
+  spot.plannedDay = getInputValue('spotDay', spot.plannedDay).trim();
+  spot.comment = getInputValue('spotComment', spot.comment).trim();
+  spot.layerId = getInputValue('spotLayer', spot.layerId);
+  spot.location = getInputValue('spotLocation', spot.location).trim();
+  spot.googleMaps = getInputValue('spotGoogleMaps', spot.googleMaps).trim();
+  spot.imageFile = getInputValue('spotImageFile', spot.imageFile).trim();
   const extra = Array.from({ length: 8 }, (_, i) => document.getElementById(`spotLayer${i + 2}`)?.value || '').filter(Boolean).filter((v, i, a) => a.indexOf(v) === i && v !== spot.layerId);
   spot.secondaryLayerIds = extra;
   syncKnownDays();
-  spot.lat = Number(document.getElementById('spotLat').value);
-  spot.lon = Number(document.getElementById('spotLon').value);
+  spot.lat = getInputNumber('spotLat', spot.lat);
+  spot.lon = getInputNumber('spotLon', spot.lon);
   spot.updatedAt = new Date().toISOString();
   closeModal();
   renderAll();
@@ -1276,6 +1330,53 @@ function makeDraggable(panelId) {
   });
 }
 
+function updateLocationUi() {
+  const slider = document.getElementById('radiusRange');
+  const value = document.getElementById('radiusValue');
+  const toggle = document.getElementById('radiusToggleBtn');
+  const button = document.getElementById('radiusFilterBtn');
+  const color = state.locationFilter.enabled ? '#16a34a' : '#dc2626';
+  if (slider) slider.value = String(state.locationFilter.radiusKm);
+  if (value) value.textContent = `${state.locationFilter.radiusKm.toFixed(1)} km`;
+  if (toggle) {
+    toggle.textContent = state.locationFilter.enabled ? 'aktiv' : 'nicht aktiv';
+    toggle.style.background = color;
+    toggle.style.color = '#fff';
+    toggle.style.borderColor = 'transparent';
+  }
+  if (button) button.classList.toggle('active', state.locationFilter.enabled);
+}
+
+function toggleRadiusPanel(force) {
+  const panel = document.getElementById('radiusModal');
+  if (!panel) return;
+  const open = typeof force === 'boolean' ? force : !panel.classList.contains('open');
+  panel.classList.toggle('open', open);
+  updateLocationUi();
+}
+
+function updateUserLocation(center, { recenter = false } = {}) {
+  state.locationFilter.center = { lat: Number(center.lat), lon: Number(center.lon) };
+  if (recenter && state.map) state.map.setView([center.lat, center.lon], Math.max(14, state.map.getZoom()));
+  saveUiSettings();
+  updateLocationUi();
+  renderAll();
+}
+
+function locateUser(recenter = true) {
+  if (!navigator.geolocation) return alert('Standorterkennung wird auf diesem Gerät nicht unterstützt.');
+  const btn = document.getElementById('locateMeBtn');
+  if (btn) btn.textContent = '…';
+  navigator.geolocation.getCurrentPosition(pos => {
+    if (btn) btn.textContent = '📍';
+    updateUserLocation({ lat: pos.coords.latitude, lon: pos.coords.longitude }, { recenter });
+  }, err => {
+    if (btn) btn.textContent = '📍';
+    alert('Standort konnte nicht ermittelt werden. Bitte Browser-Freigabe prüfen.');
+    console.warn(err);
+  }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 15000 });
+}
+
 function setupUiEvents() {
   document.querySelectorAll('[data-switch]').forEach(btn => btn.onclick = () => switchView(btn.dataset.switch));
   document.querySelectorAll('[data-role="search"]').forEach(el => el.oninput = () => { state.filters.search = el.value; renderAll(); });
@@ -1306,17 +1407,30 @@ function setupUiEvents() {
   document.getElementById('cancelAddPinBtn')?.addEventListener('click', cancelAddPin);
   document.getElementById('menuOpacityRange')?.addEventListener('input', ev => { state.uiOpacity.menu = Number(ev.target.value); applyUiOpacity(); saveUiSettings(); });
   document.getElementById('panelOpacityRange')?.addEventListener('input', ev => { state.uiOpacity.panel = Number(ev.target.value); applyUiOpacity(); saveUiSettings(); });
+  document.getElementById('uiOpacityRange')?.addEventListener('input', ev => { const v = Number(ev.target.value); state.uiOpacity.menu = v; state.uiOpacity.panel = v; applyUiOpacity(); saveUiSettings(); });
+  document.getElementById('panelBgColor')?.addEventListener('input', ev => { state.uiTheme.panelColor = ev.target.value; applyUiOpacity(); saveUiSettings(); });
+  document.getElementById('radiusRange')?.addEventListener('input', ev => { state.locationFilter.radiusKm = Math.max(0.1, Math.min(4, Number(ev.target.value))); updateLocationUi(); saveUiSettings(); renderAll(); });
+  document.getElementById('radiusToggleBtn')?.addEventListener('click', () => { state.locationFilter.enabled = !state.locationFilter.enabled; updateLocationUi(); saveUiSettings(); renderAll(); });
+  document.getElementById('radiusFilterBtn')?.addEventListener('click', () => toggleRadiusPanel());
+  document.getElementById('radiusCloseBtn')?.addEventListener('click', () => toggleRadiusPanel(false));
+  document.getElementById('locateMeBtn')?.addEventListener('click', () => locateUser(true));
   document.getElementById('dbSortField')?.addEventListener('change', ev => { state.dbSort.field = ev.target.value; saveUiSettings(); renderDatabase(); });
   document.getElementById('dbSortDir')?.addEventListener('change', ev => { state.dbSort.dir = ev.target.value; saveUiSettings(); renderDatabase(); });
   const menuRange = document.getElementById('menuOpacityRange');
   const panelRange = document.getElementById('panelOpacityRange');
+  const uiRange = document.getElementById('uiOpacityRange');
+  const panelBgColor = document.getElementById('panelBgColor');
   if (menuRange) menuRange.value = String(state.uiOpacity.menu);
   if (panelRange) panelRange.value = String(state.uiOpacity.panel);
+  if (uiRange) uiRange.value = String(state.uiOpacity.panel);
+  if (panelBgColor) panelBgColor.value = state.uiTheme.panelColor || '#ffffff';
   const dbField = document.getElementById('dbSortField');
   const dbDir = document.getElementById('dbSortDir');
   if (dbField) dbField.value = state.dbSort.field;
   if (dbDir) dbDir.value = state.dbSort.dir;
+  updateLocationUi();
 }
+
 
 async function refreshRemoteDataSilently() {
   if (!state.backendEnabled || state.saving) return;
@@ -1354,6 +1468,7 @@ function initMap(mobile = false) {
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(state.map);
   state.markerLayer = L.layerGroup().addTo(state.map);
   state.routeLayer = L.layerGroup().addTo(state.map);
+  state.locationLayer = L.layerGroup().addTo(state.map);
   state.drawItems = new L.FeatureGroup().addTo(state.map);
 
   const drawControl = new L.Control.Draw({

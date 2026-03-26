@@ -90,6 +90,18 @@
 </section>
 
 <section id="dbWrap" class="glass">
+  <div class="sort-row desktop-sort-row">
+    <select id="dbSortField">
+      <option value="name">Name</option>
+      <option value="id">Spot-ID</option>
+      <option value="updatedAt">Letzte Änderung</option>
+      <option value="layerCount">Layer-Anzahl</option>
+    </select>
+    <select id="dbSortDir">
+      <option value="asc">Aufsteigend</option>
+      <option value="desc">Absteigend</option>
+    </select>
+  </div>
   <table class="db-table">
     <thead><tr><th>ID</th><th>Name</th><th>Geplanter Tag</th><th>Layer</th><th>Kommentar</th></tr></thead>
     <tbody id="dbBody"></tbody>

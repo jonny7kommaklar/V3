@@ -127,6 +127,12 @@ body.add-pin-mode #map{cursor:crosshair}
 .locate-btn:active{
   transform:scale(.98);
 }
+.radius-btn{position:fixed;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 204px);z-index:42;width:48px;height:48px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.88);color:var(--text);font-size:21px;box-shadow:0 10px 26px rgba(15,23,42,.18);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.radius-btn.active{outline:2px solid rgba(34,197,94,.75)}
+#radiusModal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:64;background:rgba(2,6,23,.18)}
+#radiusModal.open{display:flex}
+.radius-card{width:min(92vw,330px);padding:14px;border-radius:20px;border:1px solid var(--line);box-shadow:var(--shadow)}
+.radius-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}.radius-inline{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}.radius-topline{display:flex;justify-content:space-between;align-items:center;gap:8px}.toggle-pill{padding:8px 12px;border-radius:999px;font-size:12px;font-weight:800}.color-opacity-row{display:grid;grid-template-columns:minmax(0,1fr) 74px;gap:8px;align-items:end}.color-opacity-row input[type="color"]{padding:4px;height:38px}.compact-range{padding:6px 0}.mobile-layer-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.mobile-layer-grid label{margin:0}.compact-upload-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:end}.compact-upload-row .btn{padding:10px 10px}.file-compact input{padding:8px 9px}.mobile-near-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.mobile-near-grid .near-card{display:grid;grid-template-columns:1fr;gap:6px;padding:8px;border:1px solid rgba(15,23,42,.08);border-radius:12px;background:rgba(255,255,255,.4)}.mobile-near-grid .near-thumb{width:100%;height:78px}.modal-close-x{width:42px;height:42px;border-radius:14px;border:1px solid rgba(220,38,38,.26);background:rgba(254,226,226,.9);color:#dc2626;font-size:24px;font-weight:900}.danger-compact{background:#dc2626;color:#fff;border-color:transparent;padding:8px 10px;font-size:12px}.mobile-modal-actions{grid-template-columns:1fr auto}.modal-spot-id{margin:8px 0 4px}.compact-mobile-grid{grid-template-columns:1fr 1fr}.modal-card{width:100%;border-radius:26px 26px 0 0;padding:14px;max-height:calc(100vh - 6px);overflow:auto}.modal-photo{height:min(245px,30vh)}
 .hidden-mobile{display:none}
 
 .add-pin-confirm{position:fixed;left:10px;right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 78px);z-index:45;display:none;border-radius:22px;padding:12px;max-height:min(calc(100vh - 170px), calc((100vh - 170px) * .5));overflow:auto}
@@ -146,6 +152,7 @@ body.add-pin-mode #map{cursor:crosshair}
 </div>
 
 <button class="fab-main" data-action="add-pin" aria-label="Spot hinzufügen">＋</button>
+<button id="radiusFilterBtn" class="radius-btn" aria-label="Radiusfilter" title="Radiusfilter">◎</button>
 <button id="locateMeBtn" class="locate-btn" aria-label="Mein Standort" title="Mein Standort">📍</button>
 
 <div class="glass dock">
@@ -267,6 +274,24 @@ body.add-pin-mode #map{cursor:crosshair}
   </div>
 </section>
 
+<div id="radiusModal">
+  <div class="glass radius-card">
+    <div class="radius-head">
+      <div>
+        <div class="panel-title">Radiusfilter</div>
+        <div class="panel-sub">Filtert Karte und Liste rund um deinen Standort.</div>
+      </div>
+      <button class="panel-close" id="radiusCloseBtn">✕</button>
+    </div>
+    <div class="stack">
+      <div class="radius-topline"><strong>Radius</strong><span id="radiusValue">1.0 km</span></div>
+      <input id="radiusRange" class="compact-range" type="range" min="0.1" max="4.0" step="0.1" value="1.0">
+      <button class="btn toggle-pill" id="radiusToggleBtn" type="button">nicht aktiv</button>
+      <div class="small-note">Nur Spots innerhalb des Kreises bleiben sichtbar. Suche, Layer, Bildfilter und Tage laufen normal weiter mit.</div>
+    </div>
+  </div>
+</div>
+
 <section class="glass panel" id="panel-tools" data-panel="tools">
   <div class="panel-head">
     <div>
@@ -277,26 +302,30 @@ body.add-pin-mode #map{cursor:crosshair}
   </div>
   <div class="panel-body">
     <details class="section" open>
-      <summary>Import / Export</summary>
+      <summary>Darstellung</summary>
       <div class="section-body stack">
-        <button class="btn" data-action="export-json">JSON exportieren</button>
-        <label>JSON importieren<input type="file" accept="application/json" data-action="import-json"></label>
-        <div class="small-note">Supabase speichert live. Ohne Backend landet alles nur lokal im Browser.</div>
+        <div class="color-opacity-row">
+          <label>Transparenz<input id="uiOpacityRange" type="range" min="0.08" max="1" step="0.02"></label>
+          <label>Farbe<input id="panelBgColor" type="color" value="#ffffff"></label>
+        </div>
+        <label class="checkbox"><input type="checkbox" data-role="labels-toggle" checked> Pin-Beschriftungen anzeigen</label>
       </div>
     </details>
     <details class="section" open>
-      <summary>Darstellung</summary>
-      <div class="section-body stack">
-        <label>Menüleiste Transparenz<input id="menuOpacityRange" type="range" min="0.2" max="1" step="0.02"></label>
-        <label>Panels & Popups Transparenz<input id="panelOpacityRange" type="range" min="0.2" max="1" step="0.02"></label>
-      </div>
-    </details>
-    <details class="section">
       <summary>Tipps</summary>
       <div class="section-body stack">
-        <div class="small-note">• Mit „＋“ setzt du direkt einen neuen Pin.</div>
-        <div class="small-note">• In der Datenbank kannst du Karteninfos kompakt aufklappen.</div>
-        <div class="small-note">• Die Karte bleibt frei, sobald du ein Panel schließt.</div>
+        <div class="small-note">• Spots antippen, Bild checken und direkt passend benennen.</div>
+        <div class="small-note">• Lege gute Kandidaten direkt auf deinen Layer oder Tag — spart später Sucherei.</div>
+        <div class="small-note">• Über Kommentare kannst du Überdachung, Boden, Bust-Level oder Öffnungszeiten notieren.</div>
+        <div class="small-note">• Der Radiusfilter ist praktisch, wenn du gerade nur deine aktuelle Ecke sehen willst.</div>
+      </div>
+    </details>
+    <details class="section" open>
+      <summary>Import / Export</summary>
+      <div class="section-body stack">
+        <div class="small-note">Supabase speichert live. Ohne Backend landet alles nur lokal im Browser.</div>
+        <button class="btn" data-action="export-json">JSON exportieren</button>
+        <label>JSON importieren<input type="file" accept="application/json" data-action="import-json"></label>
       </div>
     </details>
   </div>
@@ -306,6 +335,7 @@ body.add-pin-mode #map{cursor:crosshair}
   <div class="sort-row">
     <select id="dbSortField">
       <option value="name">Name</option>
+      <option value="id">Spot-ID</option>
       <option value="updatedAt">Letzte Änderung</option>
       <option value="layerCount">Layer-Anzahl</option>
     </select>
