@@ -39,7 +39,6 @@ const state = {
   locationLayer: null,
 };
 
-window.__spotmapState = state;
 const LOCAL_STORAGE_KEY = 'pragmap-local-data-v1';
 const UI_SETTINGS_KEY = 'pragmap-ui-settings-v2';
 
@@ -1518,11 +1517,7 @@ function setupRealtimeSync() {
 }
 
 function initMap(mobile = false) {
-  const customInitial = window.VANESSA_MAP_CONFIG?.initialView || null;
-  const initialLat = Number.isFinite(Number(customInitial?.lat)) ? Number(customInitial.lat) : 50.078;
-  const initialLon = Number.isFinite(Number(customInitial?.lon)) ? Number(customInitial.lon) : 14.43;
-  const initialZoom = Number.isFinite(Number(customInitial?.zoom)) ? Number(customInitial.zoom) : (mobile ? 11.5 : 12);
-  state.map = L.map('map', { zoomControl: !mobile }).setView([initialLat, initialLon], initialZoom);
+  state.map = L.map('map', { zoomControl: !mobile }).setView([50.078, 14.43], mobile ? 11.5 : 12);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(state.map);
   state.markerLayer = L.layerGroup().addTo(state.map);
   state.routeLayer = L.layerGroup().addTo(state.map);
@@ -1539,9 +1534,7 @@ function initMap(mobile = false) {
       circle: true,
     }
   });
-  if (!window.VANESSA_MAP_CONFIG?.hideDrawControls) {
-    state.map.addControl(drawControl);
-  }
+  state.map.addControl(drawControl);
 
   state.map.on(L.Draw.Event.CREATED, function (e) {
     if (!canEdit()) return alert('Zum Bearbeiten bitte einloggen.');
